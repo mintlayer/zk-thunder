@@ -1,0 +1,27 @@
+[package]
+name = "zksync_basic_types"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+ethabi.workspace = true
+hex.workspace = true
+tiny-keccak.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+chrono.workspace = true
+strum = { workspace = true, features = ["derive"] }
+num_enum.workspace = true
+anyhow.workspace = true
+url = { workspace = true, features = ["serde"] }
+serde_with.workspace = true
+
+[dev-dependencies]
+bincode.workspace = true

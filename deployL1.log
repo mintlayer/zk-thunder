@@ -1,0 +1,8 @@
+yarn run v1.22.19
+$ yarn workspace l1-contracts deploy-no-build --only-verifier
+$ ts-node scripts/deploy.ts --only-verifier
+Using deployer wallet: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+Using owner address: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+info Visit https://yarnpkg.com/en/docs/cli/workspace for documentation about this command.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.

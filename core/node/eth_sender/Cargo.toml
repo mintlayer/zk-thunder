@@ -1,0 +1,73 @@
+[package]
+name = "zksync_eth_sender"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+vise.workspace = true
+zksync_types.workspace = true
+zksync_dal.workspace = true
+zksync_config.workspace = true
+zksync_contracts.workspace = true
+zksync_eth_client.workspace = true
+zksync_utils.workspace = true
+zksync_l1_contract_interface.workspace = true
+zksync_object_store.workspace = true
+zksync_prover_interface.workspace = true
+zksync_shared_metrics.workspace = true
+zksync_node_fee_model.workspace = true
+
+zksync_mini_merkle_tree.workspace = true
+
+tokio = { workspace = true, features = ["time"] }
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+reqwest = { version = "0.11", features = ["json"] }
+serde_json = "1.0"
+serde = { workspace = true, features = ["derive"] } 
+hex = "0.4"
+rust-s3 = "0.34"
+base64 = "0.22"
+
+[dependencies.uuid]
+version = "1.1.2"
+features = ["v4"]
+
+uuid = [
+    "dep:uuid",
+    "sqlx-core/uuid",
+]
+
+[dev-dependencies]
+test-casing.workspace = true
+zksync_node_test_utils.workspace = true
+once_cell.workspace = true
+assert_matches.workspace = true
+
+[data_availability]
+ipfs_retry_base_delay_secs = 1
+ipfs_retry_max_delay_secs = 60
+ipfs_max_attempts = 5
+mintlayer_retry_base_delay_secs = 1
+mintlayer_retry_max_delay_secs = 60
+mintlayer_max_attempts = 5
+cleanup_interval_secs = 3600
+cleanup_days_threshold = 7
+batch_size = 10
+
+
+# [features]
+# default                   = ["with-hyper"]
+# with-hyper                = ["tokio/macros", "tokio/rt-multi-thread"]
+
+

@@ -1,0 +1,6 @@
+yarn run v1.22.19
+$ yarn workspace l1-contracts initialize-governance
+$ ts-node scripts/initialize-governance.ts
+Using deployer wallet: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+Using gas price: 1.500000001 gwei
+Done in 3.07s.

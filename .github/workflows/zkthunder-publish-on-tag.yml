@@ -1,0 +1,304 @@
+name: Publish Docker Images
+on:
+  push:
+    tags:
+      - 'v*-zkthunder'
+env:
+  REGISTRY: docker.io
+  BASE_IMAGE_NAME: ${{ secrets.REGISTRY_USERNAME }}
+
+jobs:
+  build-contracts:
+    name: Build Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd contracts
+          yarn install
+          
+      - name: Build system contracts
+        run: |
+          cd contracts/system-contracts
+          npm run build
+          
+      - name: Build L1 contracts
+        run: |
+          cd contracts
+          yarn l1 build
+          
+      - name: Build L2 contracts
+        run: |
+          cd contracts
+          yarn l2 build
+
+      - name: Upload contract artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-artifacts
+          path: contracts/
+
+  build-server-v2:
+    name: Build Server v2
+    needs: build-contracts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+
+      - name: Validate versioning rules
+        run: |
+          # Extract current version components
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          CLEAN_CURRENT_TAG="${CURRENT_TAG#v}"
+          CLEAN_CURRENT_TAG="${CLEAN_CURRENT_TAG%-zkthunder}"
+          IFS='.' read -ra CURRENT_VER <<< "$CLEAN_CURRENT_TAG"
+          CURRENT_MAJOR=${CURRENT_VER[0]}
+          CURRENT_MINOR=${CURRENT_VER[1]}
+          CURRENT_PATCH=${CURRENT_VER[2]}
+
+          # Get all existing versions and find the highest patch for current minor
+          HIGHEST_PATCH_CURRENT_MINOR=0
+          while read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            CLEAN_TAG="${tag#v}"
+            CLEAN_TAG="${CLEAN_TAG%-zkthunder}"
+            IFS='.' read -ra VER <<< "$CLEAN_TAG"
+
+            # Skip if not the same minor version
+            if [ "${VER[0]}" != "$CURRENT_MAJOR" ] || [ "${VER[1]}" != "$CURRENT_MINOR" ]; then
+              continue
+            fi
+
+            if [ "${VER[2]}" -gt "$HIGHEST_PATCH_CURRENT_MINOR" ]; then
+              HIGHEST_PATCH_CURRENT_MINOR=${VER[2]}
+            fi
+          done < <(git tag --list "v*-zkthunder" | grep -v "^${CURRENT_TAG}$")
+
+          # Validate: fail if trying to push a lower or equal patch version for existing minor
+          if [ "$HIGHEST_PATCH_CURRENT_MINOR" -gt 0 ] && [ "$CURRENT_PATCH" -le "$HIGHEST_PATCH_CURRENT_MINOR" ]; then
+            echo "::error::Invalid version v$CLEAN_CURRENT_TAG. A higher or equal patch version v$CURRENT_MAJOR.$CURRENT_MINOR.$HIGHEST_PATCH_CURRENT_MINOR already exists."
+            exit 1
+          fi
+        
+      - name: Download contract artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-artifacts
+          path: contracts/
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          driver-opts: |
+            image=moby/buildkit:latest
+      
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+          
+      - name: Generate Docker tags
+        id: tags
+        run: |
+          CLEAN_TAG="${GITHUB_REF#refs/tags/}"
+          CLEAN_VERSION="${CLEAN_TAG#v}"
+          CLEAN_VERSION="${CLEAN_VERSION%-zkthunder}"
+          IFS='.' read -ra V <<< "$CLEAN_VERSION"
+          IMAGE_NAME="${{ env.BASE_IMAGE_NAME }}/server-v2"
+
+          # Start with the specific version tag
+          TAGS="${{ env.REGISTRY }}/${IMAGE_NAME}:v$CLEAN_VERSION"
+
+          # Find the highest version across all tags
+          HIGHEST_VERSION=""
+          while read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            TAG_VERSION="${tag#v}"
+            TAG_VERSION="${TAG_VERSION%-zkthunder}"
+            if [ -z "$HIGHEST_VERSION" ] || [ "$(echo -e "$TAG_VERSION\n$CLEAN_VERSION" | sort -V | tail -n1)" = "$TAG_VERSION" ]; then
+              HIGHEST_VERSION="$TAG_VERSION"
+            fi
+          done < <(git tag --list "v*-zkthunder")
+
+          # Add appropriate tags based on version comparison
+          if [ "$CLEAN_VERSION" = "$HIGHEST_VERSION" ]; then
+            # This is the highest version overall - add latest and major tags
+            TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:latest"
+            TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:v${V[0]}"
+          fi
+
+          # Check if this is the highest patch for its minor version
+          HIGHEST_PATCH_FOR_MINOR=true
+          while read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            TAG_VERSION="${tag#v}"
+            TAG_VERSION="${TAG_VERSION%-zkthunder}"
+            IFS='.' read -ra TV <<< "$TAG_VERSION"
+
+            if [ "${TV[0]}" = "${V[0]}" ] && [ "${TV[1]}" = "${V[1]}" ]; then
+              if [ "$(echo -e "$TAG_VERSION\n$CLEAN_VERSION" | sort -V | tail -n1)" != "$CLEAN_VERSION" ]; then
+                HIGHEST_PATCH_FOR_MINOR=false
+                break
+              fi
+            fi
+          done < <(git tag --list "v*-zkthunder" | grep -v "^${CLEAN_TAG}$")
+
+          if [ "$HIGHEST_PATCH_FOR_MINOR" = "true" ]; then
+            # This is the highest patch for this minor - add minor tag
+            TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:v${V[0]}.${V[1]}"
+          fi
+
+          TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:zkthunder"
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "Generated tags: $TAGS"
+
+      - name: Build and push server-v2
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/server-v2/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+      - name: Scan server-v2 image
+        uses: docker/scout-action@v1
+        with:
+          dockerhub-user: ${{ secrets.REGISTRY_USERNAME }}
+          dockerhub-password: ${{ secrets.REGISTRY_PASSWORD }}
+          command: cves
+          only-severities: critical
+          image: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}/server-v2:${{ steps.meta.outputs.version }}
+
+  build-local-node:
+    name: Build Local Node
+    needs: [build-contracts, build-server-v2]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download contract artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: contract-artifacts
+          path: contracts/
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          driver-opts: |
+            image=moby/buildkit:latest
+
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Generate Docker tags
+        id: tags
+        run: |
+          CLEAN_TAG="${GITHUB_REF#refs/tags/}"
+          CLEAN_VERSION="${CLEAN_TAG#v}"
+          CLEAN_VERSION="${CLEAN_VERSION%-zkthunder}"
+          IFS='.' read -ra V <<< "$CLEAN_VERSION"
+          IMAGE_NAME="${{ env.BASE_IMAGE_NAME }}/local-node"
+
+          # Start with the specific version tag
+          TAGS="${{ env.REGISTRY }}/${IMAGE_NAME}:v$CLEAN_VERSION"
+
+          # Find the highest version across all tags
+          HIGHEST_VERSION=""
+          while read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            TAG_VERSION="${tag#v}"
+            TAG_VERSION="${TAG_VERSION%-zkthunder}"
+            if [ -z "$HIGHEST_VERSION" ] || [ "$(echo -e "$TAG_VERSION\n$CLEAN_VERSION" | sort -V | tail -n1)" = "$TAG_VERSION" ]; then
+              HIGHEST_VERSION="$TAG_VERSION"
+            fi
+          done < <(git tag --list "v*-zkthunder")
+
+          # Add appropriate tags based on version comparison
+          if [ "$CLEAN_VERSION" = "$HIGHEST_VERSION" ]; then
+            # This is the highest version overall - add latest and major tags
+            TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:latest"
+            TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:v${V[0]}"
+          fi
+
+          # Check if this is the highest patch for its minor version
+          HIGHEST_PATCH_FOR_MINOR=true
+          while read -r tag; do
+            if [ -z "$tag" ]; then continue; fi
+            TAG_VERSION="${tag#v}"
+            TAG_VERSION="${TAG_VERSION%-zkthunder}"
+            IFS='.' read -ra TV <<< "$TAG_VERSION"
+
+            if [ "${TV[0]}" = "${V[0]}" ] && [ "${TV[1]}" = "${V[1]}" ]; then
+              if [ "$(echo -e "$TAG_VERSION\n$CLEAN_VERSION" | sort -V | tail -n1)" != "$CLEAN_VERSION" ]; then
+                HIGHEST_PATCH_FOR_MINOR=false
+                break
+              fi
+            fi
+          done < <(git tag --list "v*-zkthunder" | grep -v "^${CLEAN_TAG}$")
+
+          if [ "$HIGHEST_PATCH_FOR_MINOR" = "true" ]; then
+            # This is the highest patch for this minor - add minor tag
+            TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:v${V[0]}.${V[1]}"
+          fi
+
+          TAGS="$TAGS,${{ env.REGISTRY }}/${IMAGE_NAME}:zkthunder"
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "Generated tags: $TAGS"
+
+          echo "version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build and push local-node
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/local-node/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ env.BASE_IMAGE_NAME }}/server-v2
+            BASE_VERSION=v${{ steps.tags.outputs.version }}
+
+      - name: Scan local-node image
+        uses: docker/scout-action@v1
+        with:
+          dockerhub-user: ${{ secrets.REGISTRY_USERNAME }}
+          dockerhub-password: ${{ secrets.REGISTRY_PASSWORD }}
+          command: cves
+          only-severities: critical
+          image: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}/local-node:${{ steps.meta.outputs.version }}

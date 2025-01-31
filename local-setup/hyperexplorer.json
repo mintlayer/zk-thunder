@@ -1,0 +1,22 @@
+{
+    "networks": {
+        "local": {
+            "l1_url": "http://reth:8545",
+            "explorer_prefix": "https://l1explorer.${APP_DOMAIN}/",
+            "explorer_address_prefix": "https://l1explorer.${APP_DOMAIN}/address/",
+            "single_bridges": {},
+            "shared_bridges": {
+                "kl_exp": {
+                    "chains": {
+                        "zkthunder": {
+                            "chain_id": "${L2_EXPLORER_CHAIN_ID_IN_BASE16}",
+                            "l2_url": "http://zkthunder:3050",
+                            "explorer": "https://l2explorer.${APP_DOMAIN}/",
+                            "type": "rollup"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

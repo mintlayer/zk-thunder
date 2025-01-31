@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM pending_ipfs_operations\n        WHERE created_at < NOW() - make_interval(days => $1)\n        AND (status = 'completed' OR attempts >= $2)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58b710e2348dc80fba316b328c9baa3fe4dff4b57c4f99a5aaf77c7ce523f7dc"
+}

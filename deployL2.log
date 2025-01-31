@@ -1,0 +1,34 @@
+yarn run v1.22.19
+$ yarn workspace l2-contracts deploy-shared-bridge-on-l2-through-l1
+$ ts-node src/deploy-shared-bridge-on-l2-through-l1.ts
+Using deployer wallet: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+Using nonce: 817
+Using gas price: 1.500000001 gwei
+Providing necessary L2 bytecodes
+Bytecodes published on L2
+Deploying L2SharedBridge Implementation
+l2SharedBridgeImplementationBytecode loaded
+Computing L2SharedBridge Implementation Address
+L2SharedBridge Implementation Address: 0x0c07d36d2ddba4c0563fa8545b5e21008a0b9f83
+Deploying L2SharedBridge Implementation
+Deployed L2SharedBridge Implementation
+CONTRACTS_L2_SHARED_BRIDGE_IMPL_ADDR=0x0c07d36d2ddba4c0563fa8545b5e21008a0b9f83
+Deploying L2SharedBridge Proxy
+CONTRACTS_L2_SHARED_BRIDGE_ADDR=0x72b4ae754ee790c189242941349450d982f73243
+Initializing chain governance
+Upgrade scheduled
+Upgrade with target  0xaFB9Bb31167e6afD4716F296e7A803633e9C4C3c executed:  true
+L2 shared bridge address registered on L1 via governance
+Done in 4.27s.
+yarn run v1.22.19
+$ yarn workspace l2-contracts deploy-testnet-paymaster-through-l1
+$ ts-node src/deploy-testnet-paymaster-through-l1.ts
+Using deployer wallet: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+CONTRACTS_L2_TESTNET_PAYMASTER_ADDR=0x719d909cf716ee03404194c38972b84faebea1e4
+Done in 2.80s.
+yarn run v1.22.19
+$ yarn workspace l2-contracts deploy-force-deploy-upgrader-through-l1
+$ ts-node src/deploy-force-deploy-upgrader-through-l1.ts
+Using deployer wallet: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+CONTRACTS_L2_DEFAULT_UPGRADE_ADDR=0x961f178d567be39fd20833b9eb51c61c844f71d5
+Done in 2.55s.

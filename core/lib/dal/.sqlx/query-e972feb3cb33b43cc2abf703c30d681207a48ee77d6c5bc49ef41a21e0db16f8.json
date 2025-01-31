@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO pending_ipfs_operations (\n                id, operation_type, data, attempts,\n                last_attempt, created_at, status, ipfs_hash,\n                requires_mintlayer\n            ) VALUES ($1, $2, $3, $4, $5, $6, $7::text::operation_status, $8, $9) \n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Bytea",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e972feb3cb33b43cc2abf703c30d681207a48ee77d6c5bc49ef41a21e0db16f8"
+}

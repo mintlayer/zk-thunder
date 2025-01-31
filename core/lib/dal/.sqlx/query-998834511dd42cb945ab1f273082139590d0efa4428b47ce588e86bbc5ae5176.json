@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT \n                id, operation_type, data, attempts, \n                last_attempt as \"last_attempt\", created_at,\n                status::text as \"status!\", ipfs_hash,\n                requires_mintlayer\n            FROM pending_ipfs_operations\n            WHERE status::text = 'pending'\n            OR (status::text = 'failed' AND attempts < $1)\n            ORDER BY created_at ASC\n            LIMIT $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "operation_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "data",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 3,
+        "name": "attempts",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_attempt",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "ipfs_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "requires_mintlayer",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      null,
+      true,
+      false
+    ]
+  },
+  "hash": "998834511dd42cb945ab1f273082139590d0efa4428b47ce588e86bbc5ae5176"
+}

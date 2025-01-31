@@ -1,0 +1,10 @@
+[2m2025-01-03T10:03:07.968703Z[0m [32m INFO[0m [2mzksync_server[0m[2m:[0m No sentry URL was provided
+[2m2025-01-03T10:03:07.984488Z[0m [32m INFO[0m [2mzksync_db_connection::connection_pool[0m[2m:[0m Created DB pool with parameters ConnectionPoolBuilder { database_url: "postgres://***:***@localhost/zksync_local", max_size: 1, acquire_timeout: 30s, statement_timeout: None, db: "zksync_dal::Core" }
+[2m2025-01-03T10:03:08.019884Z[0m [32m INFO[0m [2mzksync_node_genesis[0m[2m:[0m running regenesis
+[2m2025-01-03T10:03:08.050193Z[0m [32m INFO[0m [2mzksync_node_genesis[0m[2m:[0m chain_schema_genesis is complete
+[2m2025-01-03T10:03:08.050678Z[0m [32m INFO[0m [2mzksync_merkle_tree::domain[0m[2m:[0m Creating Merkle tree for genesis batch with 53  writes
+[2m2025-01-03T10:03:08.054269Z[0m [32m INFO[0m [2mzksync_merkle_tree::domain[0m[2m:[0m Processed genesis batch; root hash is 0xabdb…ebb5, 53 leaves in total
+[2m2025-01-03T10:03:08.059307Z[0m [32m INFO[0m [2mzksync_node_genesis[0m[2m:[0m genesis is complete
+[2m2025-01-03T10:03:08.067392Z[0m [32m INFO[0m [2mzksync_web3_decl::client[0m[2m:[0m Creating JSON-RPC client for network L1(Some(L1ChainId(9))) with inner client: HttpClient { transport: HttpTransportClient { target: "http://127.0.0.1:8545/", client: Http(Client), max_request_size: 10485760, max_response_size: 10485760, max_log_length: 4096, headers: {"content-type": "application/json", "accept": "application/json"} }, request_timeout: 60s, id_manager: RequestIdManager { current_id: CurrentId(0), id_kind: Number } } and rate limit: (1, 0ns)
+[2m2025-01-03T10:03:08.072985Z[0m [32m INFO[0m [2mzksync_db_connection::connection_pool[0m[2m:[0m Created DB pool with parameters ConnectionPoolBuilder { database_url: "postgres://***:***@localhost/zksync_local", max_size: 1, acquire_timeout: 30s, statement_timeout: None, db: "zksync_dal::Core" }
+[2m2025-01-03T10:03:08.125959Z[0m [32m INFO[0m [2mzksync_node_genesis[0m[2m:[0m New version id Version24

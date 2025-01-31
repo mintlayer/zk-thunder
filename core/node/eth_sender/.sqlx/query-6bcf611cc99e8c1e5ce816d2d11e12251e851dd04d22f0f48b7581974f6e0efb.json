@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE pending_ipfs_operations\n            SET status = $1::text::operation_status, attempts = $2, last_attempt = $3, ipfs_hash = $4\n            WHERE id = $5\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Timestamptz",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6bcf611cc99e8c1e5ce816d2d11e12251e851dd04d22f0f48b7581974f6e0efb"
+}

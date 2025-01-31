@@ -1,0 +1,394 @@
+# Common configuration for all services
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - zkthunder-network
+
+services:
+  traefik:
+    <<: *common
+    image: traefik:v3
+    command:
+      # API and dashboard configuration
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      # Docker provider configuration
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=zkthunder-network"
+      # Entrypoints definition
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      # Automatic HTTPS with Let's Encrypt
+      - "--certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,8.8.8.8:53"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.delaybeforecheck=0"
+      # Metrics and telemetry
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.buckets=0.1,0.3,1.2,5.0"
+      - "--metrics.prometheus.addrouterslabels=true"
+      # Access logs
+      - "--accesslog=true"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+      - "--accesslog.format=json"
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "letsencrypt:/letsencrypt"
+      - "traefik-logs:/var/log/traefik"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.${APP_DOMAIN}`)"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.tls.domains[0].main=${APP_DOMAIN}"
+      - "traefik.http.routers.dashboard.tls.domains[0].sans=*.${APP_DOMAIN}"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      # Basic Auth
+      - "traefik.http.middlewares.auth.basicauth.users=admin:${TRAEFIK_BASIC_AUTH_PASSWORD}"
+
+  prometheus:
+    <<: *common
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    <<: *common
+    image: grafana/grafana:latest
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SERVE_FROM_SUB_PATH=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${APP_DOMAIN}`)"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  # Core Infrastructure
+  postgres:
+    <<: *common
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    env_file:
+      - .env
+    command: postgres -c 'max_connections=200'
+
+  pgadmin4:
+    <<: *common
+    image: dcagatay/pwless-pgadmin4:latest
+    env_file:
+      - .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pgadmin.rule=Host(`pgadmin.${APP_DOMAIN}`)"
+      - "traefik.http.routers.pgadmin.tls=true"
+      - "traefik.http.routers.pgadmin.middlewares=pgadmin-auth"
+      - "traefik.http.middlewares.pgadmin-auth.basicauth.users=admin:${TRAEFIK_BASIC_AUTH_PASSWORD}"  # pw: yourNewPassword
+
+  # L1 Services
+  reth:
+    <<: *common
+    image: ghcr.io/paradigmxyz/reth:v0.2.0-beta.2
+    volumes:
+      - type: bind
+        source: ./reth_chaindata
+        target: /chaindata
+      - reth:/rethdata
+    command: >
+      node --metrics 0.0.0.0:9001 
+      --dev 
+      --datadir /rethdata 
+      --http 
+      --http.corsdomain "*" 
+      --http.addr 0.0.0.0 
+      --http.port 8545
+      --dev.block-time 2000ms
+      --chain /chaindata/reth_config
+    environment:
+      RUST_LOG: ${RUST_LOG}
+    expose:
+      - "8545"
+      - "9001"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.reth.rule=Host(`reth.${APP_DOMAIN}`)"
+      - "traefik.http.routers.reth.tls=true"
+      - "traefik.http.services.reth.loadbalancer.server.port=8545"
+
+  redis-db:
+    <<: *common
+    image: redis:alpine
+    command: redis-server
+
+  blockscout-backend:
+    <<: *common
+    image: blockscout/blockscout:latest
+    depends_on:
+      - postgres
+      - redis-db
+      - reth
+    command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
+    env_file:
+      - ./blockscout/common-blockscout.env
+      - .env
+    environment:
+      DATABASE_URL: ${DB_STRING}/blockscout
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.blockscout-api.rule=Host(`l1api.${APP_DOMAIN}`)"
+      - "traefik.http.routers.blockscout-api.tls=true"
+      - "traefik.http.services.blockscout-api.loadbalancer.server.port=4000"
+      # CORS
+      - "traefik.http.middlewares.blockscout-cors.headers.accesscontrolallowmethods=GET,POST,PUT,DELETE,OPTIONS"
+      - "traefik.http.middlewares.blockscout-cors.headers.accesscontrolalloworiginlist=https://l1explorer.${APP_DOMAIN}"
+      - "traefik.http.middlewares.blockscout-cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.blockscout-cors.headers.addvaryheader=true"
+      - "traefik.http.middlewares.blockscout-cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.routers.blockscout-api.middlewares=blockscout-cors"
+
+  blockscout-frontend:
+    <<: *common
+    image: ghcr.io/blockscout/frontend:latest
+    depends_on:
+      - blockscout-backend
+    env_file:
+      - ./blockscout/common-frontend.env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.blockscout.rule=Host(`l1explorer.${APP_DOMAIN}`)"
+      - "traefik.http.routers.blockscout.tls=true"
+
+  # L2 Services
+  zkthunder:
+    <<: *common
+    image: ${DOCKER_REGISTRY_ACCOUNT}/local-node:${INSTANCE_TYPE:-zkthunder}
+    healthcheck:
+      test: curl --fail http://localhost:3071/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 200
+      start_period: 30s
+    depends_on:
+      - wallet-rpc-daemon
+      - reth
+    env_file:
+      - .env
+    environment:
+      DATABASE_PROVER_URL: ${DB_STRING}/prover_local
+      DATABASE_URL: ${DB_STRING}/zksync_local
+    expose:
+      - "3050"
+      - "3051"
+    volumes:
+      - shared_config:/etc/env/target
+      - ./zkthunder-data:/etc/env/target
+      - shared_tokens:/etc/tokens
+      - node_data:/db
+      - zksync_data:/var/lib/zksync/data
+    labels:
+      - "traefik.enable=true"
+      # HTTP RPC Configuration
+      - "traefik.http.routers.zkthunder-rpc.rule=Host(`rpc.${APP_DOMAIN}`)"
+      - "traefik.http.routers.zkthunder-rpc.service=zkthunder-rpc"
+      - "traefik.http.routers.zkthunder-rpc.tls=true"
+      - "traefik.http.services.zkthunder-rpc.loadbalancer.server.port=3050"
+      # Rate limiting for HTTP RPC
+      - "traefik.http.middlewares.zkthunder-rpc-ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.zkthunder-rpc-ratelimit.ratelimit.burst=50"
+      - "traefik.http.routers.zkthunder-rpc.middlewares=zkthunder-rpc-ratelimit"
+      # WebSocket RPC Configuration
+      - "traefik.http.routers.zkthunder-ws.rule=Host(`ws.${APP_DOMAIN}`)"
+      - "traefik.http.routers.zkthunder-ws.service=zkthunder-ws"
+      - "traefik.http.routers.zkthunder-ws.tls=true"
+      - "traefik.http.services.zkthunder-ws.loadbalancer.server.port=3051"
+      # Rate limiting for WebSocket RPC
+      - "traefik.http.middlewares.zkthunder-ws-ratelimit.ratelimit.average=50"
+      - "traefik.http.middlewares.zkthunder-ws-ratelimit.ratelimit.burst=25"
+      - "traefik.http.routers.zkthunder-ws.middlewares=zkthunder-ws-ratelimit"
+      # Health endpoint configuration
+      - "traefik.http.routers.zkthunder-health.rule=Host(`health.${APP_DOMAIN}`)"
+      - "traefik.http.routers.zkthunder-health.service=zkthunder-health"
+      - "traefik.http.routers.zkthunder-health.tls=true"
+      - "traefik.http.services.zkthunder-health.loadbalancer.server.port=3071"
+      # Contract verifier configuration
+      - "traefik.http.routers.contract-verifier.rule=Host(`l2api.${APP_DOMAIN}`) && PathPrefix(`/contract_verification`)"
+      - "traefik.http.routers.contract-verifier.service=contract-verifier"
+      - "traefik.http.routers.contract-verifier.tls=true"
+      - "traefik.http.services.contract-verifier.loadbalancer.server.port=3070"
+
+  contract-verifier:
+    <<: *common
+    image: matterlabs/contract-verifier:latest2.0
+    depends_on:
+      zkthunder:
+        condition: service_healthy
+    env_file:
+      - zkthunder-data/dev.env
+      - .env
+    environment:
+      DATABASE_PROVER_URL: ${DB_STRING}/prover_local
+      DATABASE_URL: ${DB_STRING}/zksync_local
+
+  # L2 Explorer Components
+  explorer-data-fetcher:
+    <<: *common
+    image: matterlabs/block-explorer-data-fetcher:latest
+    env_file:
+      - .env
+    environment:
+      PORT: ${BLOCKEXPLORER_DATA_FETCHER_PORT}
+    depends_on:
+      zkthunder:
+        condition: service_healthy
+    expose:
+      - ${BLOCKEXPLORER_DATA_FETCHER_PORT}
+
+  explorer-worker:
+    <<: *common
+    image: matterlabs/block-explorer-worker:latest
+    env_file:
+      - .env
+    environment:
+      PORT: ${BLOCKEXPLORER_WORKER_PORT}
+    depends_on:
+      zkthunder:
+        condition: service_healthy
+    expose:
+      - ${BLOCKEXPLORER_WORKER_PORT}
+
+  explorer-api:
+    <<: *common
+    image: matterlabs/block-explorer-api:latest
+    env_file:
+      - .env
+    environment:
+      PORT: ${BLOCKEXPLORER_API_PORT}
+      DATABASE_URL: ${DB_STRING}/block-explorer
+    depends_on:
+      - explorer-worker
+    expose:
+      - ${BLOCKEXPLORER_API_PORT}
+    labels:
+      - "traefik.enable=true"
+      # API port configuration
+      - "traefik.http.routers.explorer-api.rule=Host(`l2api.${APP_DOMAIN}`)"
+      - "traefik.http.routers.explorer-api.tls=true"
+      - "traefik.http.routers.explorer-api.service=explorer-api-service"
+      - "traefik.http.services.explorer-api-service.loadbalancer.server.port=${BLOCKEXPLORER_API_PORT}"
+      # Metrics port configuration
+      - "traefik.http.routers.explorer-metrics.rule=Host(`l2metrics.${APP_DOMAIN}`)"
+      - "traefik.http.routers.explorer-metrics.tls=true"
+      - "traefik.http.routers.explorer-metrics.service=explorer-metrics-service"
+      - "traefik.http.services.explorer-metrics-service.loadbalancer.server.port=${METRICS_PORT}"
+      # CORS
+      - "traefik.http.middlewares.explorer-cors.headers.accesscontrolallowmethods=GET,POST,PUT,DELETE,OPTIONS"
+      - "traefik.http.middlewares.explorer-cors.headers.accesscontrolalloworiginlist=https://l2explorer.${APP_DOMAIN},https://hyperexplorer.${APP_DOMAIN}"
+      - "traefik.http.middlewares.explorer-cors.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.explorer-cors.headers.addvaryheader=true"
+      - "traefik.http.middlewares.explorer-cors.headers.accesscontrolallowheaders=*"
+      - "traefik.http.routers.explorer-api.middlewares=explorer-cors"
+
+  explorer-app:
+    <<: *common
+    image: ${DOCKER_REGISTRY_ACCOUNT}/block-explorer-app:zkthunder
+    env_file:
+      - .env
+    depends_on:
+      - explorer-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.explorer-app.rule=Host(`l2explorer.${APP_DOMAIN}`)"
+      - "traefik.http.routers.explorer-app.tls=true"
+      - "traefik.http.services.explorer-app.loadbalancer.server.port=3010"
+
+  # Mintlayer Services
+  node-daemon:
+    <<: *common
+    image: mintlayer/node-daemon:latest
+    command: "node-daemon testnet"
+    env_file:
+      - .env
+    volumes:
+      - "./mintlayer-data:/home/mintlayer"
+    expose:
+      - "13030"
+      - "44311"
+
+  wallet-rpc-daemon:
+    <<: *common
+    image: mintlayer/wallet-rpc-daemon:latest
+    command: "wallet-rpc-daemon testnet"
+    depends_on:
+      - node-daemon
+    env_file:
+      - .env
+    volumes:
+      - "./mintlayer-data:/home/mintlayer"
+    expose:
+      - "13034"
+
+  hyperexplorer:
+    <<: *common
+    image: ghcr.io/mm-zk/zksync_tools:latest
+    depends_on:
+      zkthunder:
+        condition: service_healthy
+    volumes:
+      - ./hyperexplorer.json:/app/operator/config.json
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hyperexplorer.rule=Host(`hyperexplorer.${APP_DOMAIN}`)"
+      - "traefik.http.routers.hyperexplorer.tls=true"
+
+  postgres-exporter:
+    <<: *common
+    image: prometheuscommunity/postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres?sslmode=disable"
+    expose:
+      - 9187
+
+networks:
+  zkthunder-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  reth:
+  shared_config:
+  shared_tokens:
+  node_data:
+  zksync_data:
+  letsencrypt:
+  traefik-logs:

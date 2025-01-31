@@ -1,0 +1,21 @@
+yarn run v1.22.19
+$ yarn workspace l1-contracts register-hyperchain
+$ ts-node scripts/register-hyperchain.ts
+Using deployer wallet: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+Using governor address: 0x52312AD6f01657413b2eaE9287f6B9ADaD93D5FE
+Using gas price: 1.500000001 gwei
+Using nonce: 810
+Using base token address: 0x0000000000000000000000000000000000000001
+Hyperchain registered, gas used: 3237884 and 3237884
+Hyperchain registration tx hash: 0x38bbf04ba236b96223d560408913b9f4cc3fe95955bd10ad3e6be935a35fb02a
+CHAIN_ETH_ZKSYNC_NETWORK_ID=270
+CONTRACTS_BASE_TOKEN_ADDR=0x0000000000000000000000000000000000000001
+CONTRACTS_DIAMOND_PROXY_ADDR=0x31b4c3cf4ebc2d9161f8ad0f6d52820c7f23e421
+Validator registered, gas used: 73274, tx hash: 0x0f23e439cd7dc0ee62e6a2e057ea5ddbe650a7206aea8ecfb3af5f577f8b19d6
+Validator 2 registered, gas used: 73262
+BaseTokenMultiplier set, gas used: 55290
+Governance set as pending admin, gas used: 54806
+Upgrade scheduled
+Upgrade with target  0x31B4C3cF4ebc2d9161F8Ad0F6d52820C7F23e421 executed:  true
+Pending admin successfully accepted
+Done in 5.23s.

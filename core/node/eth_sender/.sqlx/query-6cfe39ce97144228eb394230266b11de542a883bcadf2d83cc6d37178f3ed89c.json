@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM pending_mintlayer_batches\n        WHERE created_at < NOW() - make_interval(days => $1)\n        AND (status = 'completed' OR attempts >= $2)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6cfe39ce97144228eb394230266b11de542a883bcadf2d83cc6d37178f3ed89c"
+}
