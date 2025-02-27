@@ -245,7 +245,7 @@ services:
 
   contract-verifier:
     <<: *common
-    image: matterlabs/contract-verifier:latest2.0
+    image: matterlabs/contract-verifier:2.0-e7eb716-1738164617238
     depends_on:
       zkthunder:
         condition: service_healthy

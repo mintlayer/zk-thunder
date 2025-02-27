@@ -24,10 +24,10 @@ export default {
   defaultNetwork: "localhost",
   networks: {
     zkthunder: {
-      url: "https://rpc.mlzkthunder.shop",
+      url: "https://rpc.zkthunder.fi",
       ethNetwork: "sepolia",
       zksync: true,
-      verifyURL: "https://l2api.mlzkthunder.shop/contract_verification",
+      verifyURL: "https://l2api.zkthunder.fi/contract_verification",
     },
     localhost: {
       // era-test-node default url
