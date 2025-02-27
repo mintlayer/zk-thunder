@@ -317,7 +317,7 @@ services:
 
   explorer-app:
     <<: *common
-    image: ${DOCKER_REGISTRY_ACCOUNT}/block-explorer-app:zkthunder
+    image: ${DOCKER_REGISTRY_ACCOUNT}/zk-explorer:zkthunder
     env_file:
       - .env
     depends_on:

@@ -303,10 +303,10 @@ The L2 block explorer frontend service requires customization for your domain:
 
    ```bash
    # Build image
-   docker build -t ${DOCKER_REGISTRY_ACCOUNT}/explorer-app:zkthunder .
+   docker build -t ${DOCKER_REGISTRY_ACCOUNT}/zk-explorer:zkthunder .
 
    # Push to registry
-   docker push ${DOCKER_REGISTRY_ACCOUNT}/explorer-app:zkthunder
+   docker push ${DOCKER_REGISTRY_ACCOUNT}/zk-explorer:zkthunder
    ```
 
    Note: Make sure the `DOCKER_REGISTRY_ACCOUNT` in your .env file matches your Docker registry username where you have push permissions.
@@ -315,7 +315,7 @@ The L2 block explorer frontend service requires customization for your domain:
 
    ```yaml
    explorer-app:
-     image: ${DOCKER_REGISTRY_ACCOUNT}/explorer-app:zkthunder
+     image: ${DOCKER_REGISTRY_ACCOUNT}/zk-explorer:zkthunder
    ```
 
 ### How to Source Required Information
