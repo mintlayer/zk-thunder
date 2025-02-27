@@ -192,7 +192,7 @@ jobs:
           only-severities: critical
           image: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}/server-v2:${{ steps.meta.outputs.version }}
 
-  build-local-node:
+  build-zk-node:
     name: Build Local Node
     needs: [build-contracts, build-server-v2]
     runs-on: ubuntu-latest
@@ -230,7 +230,7 @@ jobs:
           CLEAN_VERSION="${CLEAN_TAG#v}"
           CLEAN_VERSION="${CLEAN_VERSION%-zkthunder}"
           IFS='.' read -ra V <<< "$CLEAN_VERSION"
-          IMAGE_NAME="${{ env.BASE_IMAGE_NAME }}/local-node"
+          IMAGE_NAME="${{ env.BASE_IMAGE_NAME }}/zk-node"
 
           # Start with the specific version tag
           TAGS="${{ env.REGISTRY }}/${IMAGE_NAME}:v$CLEAN_VERSION"
@@ -281,11 +281,11 @@ jobs:
 
           echo "version=${CLEAN_VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Build and push local-node
+      - name: Build and push zk-node
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/local-node/Dockerfile
+          file: docker/zk-node/Dockerfile
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
@@ -294,11 +294,11 @@ jobs:
             BASE_IMAGE=${{ env.BASE_IMAGE_NAME }}/server-v2
             BASE_VERSION=v${{ steps.tags.outputs.version }}
 
-      - name: Scan local-node image
+      - name: Scan zk-node image
         uses: docker/scout-action@v1
         with:
           dockerhub-user: ${{ secrets.REGISTRY_USERNAME }}
           dockerhub-password: ${{ secrets.REGISTRY_PASSWORD }}
           command: cves
           only-severities: critical
-          image: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}/local-node:${{ steps.meta.outputs.version }}
+          image: ${{ env.REGISTRY }}/${{ env.BASE_IMAGE_NAME }}/zk-node:${{ steps.meta.outputs.version }}

@@ -1,6 +1,6 @@
-# local-node docker
+# zk-node docker
 
-This docker container is used for 'local-node' - the fast way to bring up the fully working system (similar to what you
+This docker container is used for 'zk-node' - the fast way to bring up the fully working system (similar to what you
 get by running `zk init`).
 
 You can find more instructions (and docker compose files) [here](https://github.com/matter-labs/local-setup)
@@ -12,13 +12,13 @@ This directory is more focused on 'creating' the image rather than using it.
 To build the node locally run:
 
 ```shell
-zk docker build local-node --custom-tag "my_custom_local_tag"
+zk docker build zk-node --custom-tag "my_custom_local_tag"
 ```
 
 Then you can quickly test it locally (assuming that you already have a postgres and reth docker running):
 
 ```shell
-docker run --network host --env-file=docker-env.list --entrypoint /bin/bash -it --name my_local_zksync matterlabs/local-node:my_custom_local_tag
+docker run --network host --env-file=docker-env.list --entrypoint /bin/bash -it --name my_local_zksync matterlabs/zk-node:my_custom_local_tag
 ```
 
 The `docker-env.list` should contain environment variables:

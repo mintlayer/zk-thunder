@@ -97,11 +97,11 @@ Now you can build docker images over a initialized zkthunder project:
 ```sh
 ZKSYNC_HOME=`pwd`  PATH=$ZKSYNC_HOME/bin:$PATH  zk  docker  build  server-v2  --custom-tag  "zkthunder"
 
-ZKSYNC_HOME=`pwd`  PATH=$ZKSYNC_HOME/bin:$PATH  zk  docker  build  local-node  --custom-tag  "zkthunder"
+ZKSYNC_HOME=`pwd`  PATH=$ZKSYNC_HOME/bin:$PATH  zk  docker  build  zk-node  --custom-tag  "zkthunder"
 ```
 
 The built images will be used in the docker-compose cluster, and make sure you have built the server-v2 image at first.
-Otherwise the local-node image will fail.
+Otherwise the zk-node image will fail.
 
 ## Deploy
 
@@ -277,7 +277,7 @@ proxy-relay:
  zkthunder:
     stdin_open: true
     tty: true
-    image: matterlabs/local-node:${INSTANCE_TYPE:-zkthunder}
+    image: matterlabs/zk-node:${INSTANCE_TYPE:-zkthunder}
     healthcheck:
       test: curl --fail http://localhost:3071/health || exit 1
       interval: 10s

@@ -6,7 +6,7 @@ const IMAGES = [
     'external-node',
     'contract-verifier',
     'prover-v2',
-    'local-node',
+    'zk-node',
     'zk-environment',
     'circuit-synthesizer',
     'witness-generator',

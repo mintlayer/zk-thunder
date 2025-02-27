@@ -188,7 +188,7 @@ services:
   # L2 Services
   zkthunder:
     <<: *common
-    image: ${DOCKER_REGISTRY_ACCOUNT}/local-node:${INSTANCE_TYPE:-zkthunder}
+    image: ${DOCKER_REGISTRY_ACCOUNT}/zk-node:${INSTANCE_TYPE:-zkthunder}
     healthcheck:
       test: curl --fail http://localhost:3071/health || exit 1
       interval: 10s

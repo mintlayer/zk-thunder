@@ -1,7 +1,7 @@
 # Image is always built from the server image to reuse the common parts
 # This image is expected to be built locally beforehand (implemented in the `zk` tool)
 # ARG BASE_VERSION=latest2.0
-ARG BASE_IMAGE
+ARG BASE_IMAGE=matterlabs/server-v2
 ARG BASE_VERSION=zkthunder
 FROM ${BASE_IMAGE}:${BASE_VERSION}
 
@@ -76,7 +76,7 @@ COPY prover/prover_dal prover/prover_dal
 RUN mkdir /etc/env/l1-inits && mkdir /etc/env/l2-inits
 
 # setup entrypoint script
-COPY ./docker/local-node/entrypoint.sh /usr/bin/
+COPY ./docker/zk-node/entrypoint.sh /usr/bin/
 RUN chmod +x /usr/bin/entrypoint.sh
 
 ENTRYPOINT ["entrypoint.sh"]
