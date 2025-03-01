@@ -292,8 +292,8 @@ proxy-relay:
       # - IPFS_API_URL=http://ipfs:5001
       - ML_RPC_URL=http://host.docker.internal:13034 # change to mainnet if needed
       - ML_BATCH_SIZE=10 # change if necessary
-      - 4EVERLAND_API_KEY=5F2R8SK2EQNSNCHSRWIK # only for test
-      - 4EVERLAND_SECRET_KEY=sCGfIdQZfis8YVCXnQP53SL8cPdRxyzjPLh1KYmF # only for test
+      - 4EVERLAND_API_KEY= XXXXX
+      - 4EVERLAND_SECRET_KEY= XXXX
       - 4EVERLAND_BUCKET_NAME=zkthunder # only for test
     ports:
       - 15100:3050 # JSON RPC HTTP port
