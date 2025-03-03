@@ -3,6 +3,11 @@ x-common: &common
   restart: unless-stopped
   networks:
     - zkthunder-network
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   traefik:
@@ -78,7 +83,7 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_SERVE_FROM_SUB_PATH=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
@@ -99,6 +104,12 @@ services:
     env_file:
       - .env
     command: postgres -c 'max_connections=200'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   pgadmin4:
     <<: *common
@@ -110,7 +121,10 @@ services:
       - "traefik.http.routers.pgadmin.rule=Host(`pgadmin.${APP_DOMAIN}`)"
       - "traefik.http.routers.pgadmin.tls=true"
       - "traefik.http.routers.pgadmin.middlewares=pgadmin-auth"
-      - "traefik.http.middlewares.pgadmin-auth.basicauth.users=admin:${TRAEFIK_BASIC_AUTH_PASSWORD}"  # pw: yourNewPassword
+      - "traefik.http.middlewares.pgadmin-auth.basicauth.users=admin:${TRAEFIK_BASIC_AUTH_PASSWORD}"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # L1 Services
   reth:
@@ -132,7 +146,7 @@ services:
       --dev.block-time 2000ms
       --chain /chaindata/reth_config
     environment:
-      RUST_LOG: ${RUST_LOG}
+      RUST_LOG: ${RUST_LOG:-info}
     expose:
       - "8545"
       - "9001"
@@ -146,14 +160,23 @@ services:
     <<: *common
     image: redis:alpine
     command: redis-server
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   blockscout-backend:
     <<: *common
     image: blockscout/blockscout:latest
     depends_on:
-      - postgres
-      - redis-db
-      - reth
+      postgres:
+        condition: service_healthy
+      redis-db:
+        condition: service_healthy
+      reth:
+        condition: service_started
     command: sh -c "bin/blockscout eval \"Elixir.Explorer.ReleaseTasks.create_and_migrate()\" && bin/blockscout start"
     env_file:
       - ./blockscout/common-blockscout.env
@@ -172,12 +195,19 @@ services:
       - "traefik.http.middlewares.blockscout-cors.headers.addvaryheader=true"
       - "traefik.http.middlewares.blockscout-cors.headers.accesscontrolallowheaders=*"
       - "traefik.http.routers.blockscout-api.middlewares=blockscout-cors"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   blockscout-frontend:
     <<: *common
     image: ghcr.io/blockscout/frontend:latest
     depends_on:
-      - blockscout-backend
+      blockscout-backend:
+        condition: service_healthy
     env_file:
       - ./blockscout/common-frontend.env
     labels:
@@ -374,6 +404,9 @@ services:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres?sslmode=disable"
     expose:
       - 9187
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 networks:
   zkthunder-network:
