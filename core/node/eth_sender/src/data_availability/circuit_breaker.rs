@@ -1,11 +1,22 @@
 use std::time::{Duration, Instant};
+use zksync_dal::{Connection, Core, CoreDal};
+use super::error::DataAvailabilityError;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CircuitBreakerState {
+    Closed,
+    Open,
+    HalfOpen,
+}
 
 #[derive(Debug)]
 pub struct CircuitBreaker {
     failure_threshold: u32,
     reset_timeout: Duration,
-    failures: u32,
-    last_failure: Option<Instant>,
+    half_open_timeout: Duration,
+    failure_count: u32,
+    last_failure_time: Option<Instant>,
+    state: CircuitBreakerState,
 }
 
 impl CircuitBreaker {
@@ -13,23 +24,98 @@ impl CircuitBreaker {
         Self {
             failure_threshold,
             reset_timeout,
-            failures: 0,
-            last_failure: None,
+            half_open_timeout: reset_timeout / 2,
+            failure_count: 0,
+            last_failure_time: None,
+            state: CircuitBreakerState::Closed,
         }
     }
 
-    pub fn is_open(&self) -> bool {
-        if let Some(last_failure) = self.last_failure {
-            if last_failure.elapsed() >= self.reset_timeout {
-                return false;
-            }
-        }
-        self.failures >= self.failure_threshold
+    pub fn with_half_open_timeout(mut self, half_open_timeout: Duration) -> Self {
+        self.half_open_timeout = half_open_timeout;
+        self
+    }
+
+    pub fn is_open(&mut self) -> bool {
+        self.check_state();
+        self.state != CircuitBreakerState::Closed
     }
 
     pub fn record_failure(&mut self) -> bool {
-        self.failures += 1;
-        self.last_failure = Some(Instant::now());
-        self.failures >= self.failure_threshold
+        self.failure_count += 1;
+        self.last_failure_time = Some(Instant::now());
+        
+        if self.state == CircuitBreakerState::HalfOpen || 
+           (self.state == CircuitBreakerState::Closed && self.failure_count >= self.failure_threshold) {
+            self.state = CircuitBreakerState::Open;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn record_success(&mut self) {
+        if self.state == CircuitBreakerState::HalfOpen {
+            self.state = CircuitBreakerState::Closed;
+            self.failure_count = 0;
+            self.last_failure_time = None;
+        }
+    }
+
+    fn check_state(&mut self) {
+        if self.state == CircuitBreakerState::Open {
+            if let Some(last_failure) = self.last_failure_time {
+                if last_failure.elapsed() >= self.reset_timeout {
+                    self.state = CircuitBreakerState::HalfOpen;
+                    self.failure_count = 0;
+                }
+            }
+        } else if self.state == CircuitBreakerState::HalfOpen {
+            if let Some(last_failure) = self.last_failure_time {
+                if last_failure.elapsed() >= self.half_open_timeout {
+                    // Allow a test request to go through
+                    self.state = CircuitBreakerState::HalfOpen;
+                }
+            }
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = CircuitBreakerState::Closed;
+        self.failure_count = 0;
+        self.last_failure_time = None;
+    }
+
+    pub fn get_state(&mut self) -> CircuitBreakerState {
+        self.check_state();
+        self.state
+    }
+}
+
+pub async fn with_transaction<F, T>(
+    conn: &mut Connection<'_, Core>,
+    f: F,
+) -> Result<T, DataAvailabilityError>
+where
+    F: FnOnce(&mut Connection<'_, Core>) -> Result<T, DataAvailabilityError> + Send,
+    T: Send,
+{
+    let mut tx = conn
+        .start_transaction()
+        .await
+        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+
+    match f(&mut tx).await {
+        Ok(result) => {
+            tx.commit()
+                .await
+                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+            Ok(result)
+        }
+        Err(e) => {
+            // Attempt to roll back, but don't propagate rollback errors
+            let _ = tx.rollback().await;
+            Err(e)
+        }
     }
 }

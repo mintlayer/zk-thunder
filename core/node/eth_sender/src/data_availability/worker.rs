@@ -1,5 +1,10 @@
 use super::{
-    circuit_breaker::CircuitBreaker, error::DataAvailabilityError, metrics::DataAvailabilityMetrics,
+    circuit_breaker::{CircuitBreaker, CircuitBreakerState},
+    config::{DataAvailabilityConfig, WorkerConfig},
+    error::DataAvailabilityError,
+    metrics::DataAvailabilityMetrics,
+    retry::with_exponential_backoff,
+    services::{IPFSService, MintlayerService},
 };
 use base64::Engine;
 use s3::Bucket;
@@ -12,40 +17,68 @@ use zksync_dal::{
     Connection, ConnectionPool, Core, CoreDal,
 };
 
-#[derive(Debug, Clone)]
-pub struct WorkerConfig {
-    pub ipfs_retry_base_delay: Duration,
-    pub ipfs_retry_max_delay: Duration,
-    pub ipfs_max_attempts: u32,
-    pub mintlayer_retry_base: Duration,
-    pub mintlayer_retry_max_delay: Duration,
-    pub mintlayer_max_attempts: u32,
-    pub cleanup_interval: Duration,
-    pub cleanup_days_threshold: i32,
-    pub batch_size: usize,
+// Helper function for transaction management
+async fn with_transaction<F, T>(
+    conn: &mut Connection<'_, Core>,
+    f: F,
+) -> Result<T, DataAvailabilityError>
+where
+    F: FnOnce(&mut Connection<'_, Core>) -> Result<T, DataAvailabilityError> + Send,
+    T: Send,
+{
+    let mut tx = conn
+        .start_transaction()
+        .await
+        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+
+    match f(&mut tx).await {
+        Ok(result) => {
+            tx.commit()
+                .await
+                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+            Ok(result)
+        }
+        Err(e) => {
+            // Attempt to roll back, but don't propagate rollback errors
+            let _ = tx.rollback().await;
+            Err(e)
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct DataAvailabilityWorker {
+pub struct DataAvailabilityWorker<I: IPFSService, M: MintlayerService> {
     config: WorkerConfig,
     pool: ConnectionPool<Core>,
     metrics: Arc<DataAvailabilityMetrics>,
+    ipfs_service: Arc<I>,
+    mintlayer_service: Arc<M>,
     ipfs_circuit_breaker: Mutex<CircuitBreaker>,
     mintlayer_circuit_breaker: Mutex<CircuitBreaker>,
 }
 
-impl DataAvailabilityWorker {
+impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
     pub fn new(
         config: WorkerConfig,
         pool: ConnectionPool<Core>,
         metrics: Arc<DataAvailabilityMetrics>,
+        ipfs_service: Arc<I>,
+        mintlayer_service: Arc<M>,
     ) -> Self {
         Self {
-            ipfs_circuit_breaker: Mutex::new(CircuitBreaker::new(5, Duration::from_secs(300))),
-            mintlayer_circuit_breaker: Mutex::new(CircuitBreaker::new(5, Duration::from_secs(300))),
+            ipfs_circuit_breaker: Mutex::new(
+                CircuitBreaker::new(5, Duration::from_secs(300))
+                    .with_half_open_timeout(Duration::from_secs(30)),
+            ),
+            mintlayer_circuit_breaker: Mutex::new(
+                CircuitBreaker::new(5, Duration::from_secs(300))
+                    .with_half_open_timeout(Duration::from_secs(30)),
+            ),
             config,
             pool,
             metrics,
+            ipfs_service,
+            mintlayer_service,
         }
     }
 
@@ -53,12 +86,20 @@ impl DataAvailabilityWorker {
         &self,
         op: &mut PendingIpfsOperation,
     ) -> Result<(), DataAvailabilityError> {
-        if self.ipfs_circuit_breaker.lock().await.is_open() {
-            self.metrics.circuit_breaker_trips.inc();
-            return Err(DataAvailabilityError::CircuitBreakerOpenError(
-                "IPFS".into(),
-            ));
+        let mut circuit_breaker = self.ipfs_circuit_breaker.lock().await;
+        if circuit_breaker.is_open() {
+            if circuit_breaker.get_state() == CircuitBreakerState::HalfOpen {
+                // Allow one test request through in half-open state
+                tracing::info!("Circuit breaker in half-open state, allowing test request");
+            } else {
+                self.metrics.circuit_breaker_trips.inc();
+                return Err(DataAvailabilityError::CircuitBreakerOpenError(
+                    "IPFS".into(),
+                ));
+            }
         }
+        drop(circuit_breaker); // Release the lock before the long-running operation
+
         let start = Instant::now();
         let result = self.upload_to_ipfs_with_backoff(op).await;
         let duration = start.elapsed();
@@ -67,6 +108,7 @@ impl DataAvailabilityWorker {
         match result {
             Ok(hash) => {
                 self.metrics.ipfs_success.inc();
+                self.ipfs_circuit_breaker.lock().await.record_success();
 
                 let mut conn = self
                     .pool
@@ -74,27 +116,21 @@ impl DataAvailabilityWorker {
                     .await
                     .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-                let mut tx = conn
-                    .start_transaction()
-                    .await
-                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
-                op.status = OperationStatus::Completed;
-                op.ipfs_hash = Some(hash.clone());
-                tx.data_availability_dal()
-                    .update_ipfs_operations(op)
-                    .await
-                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
-                if op.requires_mintlayer {
-                    self.queue_mintlayer_batch(tx, hash).await?;
-                } else {
-                    tx.commit()
+                with_transaction(&mut conn, |tx| async move {
+                    op.status = OperationStatus::Completed;
+                    op.ipfs_hash = Some(hash.clone());
+                    tx.data_availability_dal()
+                        .update_ipfs_operations(op)
                         .await
                         .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-                }
 
-                Ok(())
+                    if op.requires_mintlayer {
+                        self.queue_mintlayer_batch(tx, hash).await?;
+                    }
+                    
+                    Ok(())
+                })
+                .await
             }
             Err(e) => {
                 self.metrics.ipfs_errors.inc();
@@ -110,146 +146,103 @@ impl DataAvailabilityWorker {
         &self,
         op: &mut PendingIpfsOperation,
     ) -> Result<String, DataAvailabilityError> {
-        let mut delay = self.config.ipfs_retry_base_delay;
-
-        while op.attempts < self.config.ipfs_max_attempts {
-            match self.setup_and_upload_to_ipfs(&op.data).await {
-                Ok(hash) => return Ok(hash),
-                Err(e) => {
-                    op.attempts += 1;
-                    self.metrics.ipfs_retry_count.inc();
-
-                    if op.attempts >= self.config.ipfs_max_attempts {
-                        return Err(e);
-                    }
-
-                    tracing::warn!("IPFS upload failed (attempt {}): {}", op.attempts, e);
-                    tokio::time::sleep(delay).await;
-                    delay = std::cmp::min(delay * 2, self.config.ipfs_retry_max_delay);
-                }
-            }
-        }
-
-        Err(DataAvailabilityError::MaxRetriesExceededError(
-            "IPFS".into(),
-        ))
+        let data = op.data.clone();
+        
+        with_exponential_backoff(
+            || async {
+                op.attempts += 1;
+                self.ipfs_service.upload(&data).await
+            },
+            self.config.ipfs_retry_base_delay,
+            self.config.ipfs_retry_max_delay,
+            self.config.ipfs_max_attempts - op.attempts,
+            "IPFS",
+        )
+        .await
     }
 
-    async fn setup_and_upload_to_ipfs(&self, data: &[u8]) -> Result<String, DataAvailabilityError> {
-        let api_key = std::env::var("4EVERLAND_API_KEY")
-            .map_err(|_| DataAvailabilityError::ConfigError("4EVERLAND_API_KEY not set".into()))?;
-        let secret_key = std::env::var("4EVERLAND_SECRET_KEY").map_err(|_| {
-            DataAvailabilityError::ConfigError("4EVERLAND_SECRET_KEY not set".into())
-        })?;
-        let bucket_name = std::env::var("4EVERLAND_BUCKET_NAME").map_err(|_| {
-            DataAvailabilityError::ConfigError("4EVERLAND_BUCKET_NAME not set".into())
-        })?;
+    async fn process_mintlayer_batch(
+        &self,
+        batch: &mut PendingMintlayerBatch,
+    ) -> Result<(), DataAvailabilityError> {
+        let mut circuit_breaker = self.mintlayer_circuit_breaker.lock().await;
+        if circuit_breaker.is_open() {
+            if circuit_breaker.get_state() == CircuitBreakerState::HalfOpen {
+                // Allow one test request through in half-open state
+                tracing::info!("Circuit breaker in half-open state, allowing test request");
+            } else {
+                self.metrics.circuit_breaker_trips.inc();
+                return Err(DataAvailabilityError::CircuitBreakerOpenError(
+                    "Mintlayer".into(),
+                ));
+            }
+        }
+        drop(circuit_breaker); // Release the lock before the long-running operation
 
-        let credentials =
-            s3::creds::Credentials::new(Some(&api_key), Some(&secret_key), None, None, None)
-                .map_err(|e| DataAvailabilityError::ConfigError(e.to_string()))?;
-        let bucket = Bucket::new(
-            &bucket_name,
-            s3::Region::Custom {
-                region: "us-east-1".into(),
-                endpoint: "https://endpoint.4everland.co".into(),
+        let start = Instant::now();
+        let result = self.submit_to_mintlayer_with_backoff(batch).await;
+        let duration = start.elapsed();
+        self.metrics.mintlayer_operation_duration.observe(duration);
+
+        match result {
+            Ok(tx_hash) => {
+                self.metrics.mintlayer_success.inc();
+                self.mintlayer_circuit_breaker.lock().await.record_success();
+
+                let mut conn = self
+                    .pool
+                    .connection_tagged("data_availability_worker")
+                    .await
+                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+
+                with_transaction(&mut conn, |tx| async move {
+                    batch.status = OperationStatus::Completed;
+                    batch.tx_hash = Some(tx_hash);
+
+                    tx.data_availability_dal()
+                        .update_mintlayer_batch(batch)
+                        .await
+                        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+                    
+                    Ok(())
+                })
+                .await
+            }
+            Err(e) => {
+                self.metrics.mintlayer_errors.inc();
+                if self.mintlayer_circuit_breaker.lock().await.record_failure() {
+                    tracing::error!("Circuit breaker opened for Mintlayer operations");
+                }
+                Err(e)
+            }
+        }
+    }
+
+    async fn submit_to_mintlayer_with_backoff(
+        &self,
+        batch: &mut PendingMintlayerBatch,
+    ) -> Result<String, DataAvailabilityError> {
+        let ipfs_hashes = batch.ipfs_hashes.clone();
+        
+        with_exponential_backoff(
+            || async {
+                batch.attempts += 1;
+                self.mintlayer_service.submit_hashes(&ipfs_hashes).await
             },
-            credentials,
+            self.config.mintlayer_retry_base,
+            self.config.mintlayer_retry_max_delay,
+            self.config.mintlayer_max_attempts - batch.attempts,
+            "Mintlayer",
         )
-        .map_err(|e| DataAvailabilityError::ConfigError(e.to_string()))?;
-
-        let doc_name = format!("op_{}", Uuid::new_v4());
-        let contents = Cursor::new(data.to_vec());
-
-        self.upload_to_ipfs(&bucket, &doc_name, contents).await
+        .await
     }
 
     pub async fn run(self) {
-        let mintlayer_rpc_url = std::env::var("ML_RPC_URL").expect("ML_RPC_URL not set");
-
-        let mintlayer_rpc_username = std::env::var("ML_RPC_USERNAME");
-        let mintlayer_rpc_password = std::env::var("ML_RPC_PASSWORD");
-        let mnemonic = std::env::var("ML_MNEMONIC");
-
-        let creds = match (mintlayer_rpc_username, mintlayer_rpc_password) {
-            (Ok(username), Ok(password)) => {
-                let creds = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{username}:{password}"));
-                Some(format!("Basic {creds}"))
-            }
-            _ => None,
-        };
-
-        let client = reqwest::Client::new();
-        let headers = {
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert("Content-Type", "application/json".parse().unwrap());
-            if let Some(credentials) = creds {
-                headers.insert("Authorization", credentials.as_str().parse().unwrap());
-            }
-            headers
-        };
-
-        let payload = match mnemonic {
-            Ok(mnemonic) => serde_json::json!({
-                "method": "wallet_create",
-                "params": {
-                    "path": "/home/mintlayer/wallet.dat",
-                    "store_seed_phrase": true,
-                    "mnemonic": mnemonic
-                },
-                "jsonrpc": "2.0",
-                "id": 1,
-            }),
-            Err(_) => serde_json::json!({
-                "method": "wallet_create",
-                "params": {
-                    "path": "/home/mintlayer/wallet.dat",
-                    "store_seed_phrase": true
-                },
-                "jsonrpc": "2.0",
-                "id": 1,
-            }),
-        };
-
-        let _ = client
-            .post(&mintlayer_rpc_url)
-            .headers(headers.clone())
-            .json(&payload)
-            .send()
-            .await;
-
-        let payload = serde_json::json!({
-            "method": "wallet_open",
-            "params": {
-                "path": "/home/mintlayer/wallet.dat",
-            },
-            "jsonrpc": "2.0",
-            "id": 1,
-        });
-
-        let _ = client
-            .post(&mintlayer_rpc_url)
-            .headers(headers.clone())
-            .json(&payload)
-            .send()
-            .await;
-
-        let payload = serde_json::json!({
-            "method": "address_new",
-            "params": {
-                "account": 0,
-            },
-            "jsonrpc": "2.0",
-            "id": 1,
-        });
-
-        let _ = client
-            .post(&mintlayer_rpc_url)
-            .headers(headers)
-            .json(&payload)
-            .send()
-            .await;
+        // Initialize Mintlayer wallet
+        if let Err(e) = self.mintlayer_service.initialize_wallet().await {
+            tracing::error!("Failed to initialize Mintlayer wallet: {}", e);
+            // Continue anyway, as the wallet might already be initialized
+        }
 
         let self_arc = Arc::new(self);
 
@@ -377,200 +370,42 @@ impl DataAvailabilityWorker {
         }
     }
 
-    async fn process_mintlayer_batch(
-        &self,
-        batch: &mut PendingMintlayerBatch,
-    ) -> Result<(), DataAvailabilityError> {
-        if self.mintlayer_circuit_breaker.lock().await.is_open() {
-            self.metrics.circuit_breaker_trips.inc();
-            return Err(DataAvailabilityError::CircuitBreakerOpenError(
-                "Mintlayer".into(),
-            ));
-        }
-
-        let start = Instant::now();
-        let result = self.submit_to_mintlayer_with_backoff(batch).await;
-        let duration = start.elapsed();
-        self.metrics.mintlayer_operation_duration.observe(duration);
-
-        match result {
-            Ok(tx_hash) => {
-                self.metrics.mintlayer_success.inc();
-
-                let mut conn = self
-                    .pool
-                    .connection_tagged("data_availability_worker")
-                    .await
-                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-                let mut tx = conn
-                    .start_transaction()
-                    .await
-                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
-                batch.status = OperationStatus::Completed;
-                batch.tx_hash = Some(tx_hash);
-
-                tx.data_availability_dal()
-                    .update_mintlayer_batch(batch)
-                    .await
-                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-                tx.commit()
-                    .await
-                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-                Ok(())
-            }
-            Err(e) => {
-                self.metrics.mintlayer_errors.inc();
-                if self.mintlayer_circuit_breaker.lock().await.record_failure() {
-                    tracing::error!("Circuit breaker opened for Mintlayer operations");
-                }
-                Err(e)
-            }
-        }
-    }
-
-    async fn submit_to_mintlayer_with_backoff(
-        &self,
-        batch: &mut PendingMintlayerBatch,
-    ) -> Result<String, DataAvailabilityError> {
-        let mut delay = self.config.mintlayer_retry_base;
-
-        while batch.attempts < self.config.mintlayer_max_attempts {
-            match self.submit_to_mintlayer(&batch.ipfs_hashes).await {
-                Ok(tx_hash) => return Ok(tx_hash),
-                Err(e) => {
-                    batch.attempts += 1;
-                    self.metrics.mintlayer_retry_count.inc();
-
-                    if batch.attempts >= self.config.mintlayer_max_attempts {
-                        return Err(e);
-                    }
-
-                    tracing::warn!(
-                        "Mintlayer submission failed (attempt {}): {}",
-                        batch.attempts,
-                        e
-                    );
-                    tokio::time::sleep(delay).await;
-                    delay = std::cmp::min(delay * 2, self.config.mintlayer_retry_max_delay);
-                }
-            }
-        }
-
-        Err(DataAvailabilityError::MaxRetriesExceededError(
-            "Mintlayer".into(),
-        ))
-    }
-
-    async fn submit_to_mintlayer(
-        &self,
-        ipfs_hashes: &[String],
-    ) -> Result<String, DataAvailabilityError> {
-        let mintlayer_rpc_url = std::env::var("ML_RPC_URL")
-            .map_err(|_| DataAvailabilityError::ConfigError("ML_RPC_URL not set".into()))?;
-
-        let mintlayer_rpc_username = std::env::var("ML_RPC_USERNAME");
-        let mintlayer_rpc_password = std::env::var("ML_RPC_PASSWORD");
-
-        let creds = match (mintlayer_rpc_username, mintlayer_rpc_password) {
-            (Ok(username), Ok(password)) => {
-                let creds = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{username}:{password}"));
-                Some(format!("Basic {creds}"))
-            }
-            _ => None,
-        };
-
-        let client = reqwest::Client::new();
-        let headers = {
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert("Content-Type", "application/json".parse().unwrap());
-            if let Some(credentials) = creds {
-                headers.insert("Authorization", credentials.as_str().parse().unwrap());
-            }
-            headers
-        };
-        let payload = serde_json::json!({
-            "method": "address_deposit_data",
-            "params": {
-                "data": hex::encode(ipfs_hashes.join(",")),
-                "account": 0,
-                "options": {},
-            },
-            "jsonrpc": "2.0",
-            "id": 1,
-        });
-
-        let response = client
-            .post(&mintlayer_rpc_url)
-            .headers(headers)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| DataAvailabilityError::MintlayerError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(DataAvailabilityError::MintlayerError(format!(
-                "Request failed with status: {}",
-                response.status()
-            )));
-        }
-
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| DataAvailabilityError::MintlayerError(e.to_string()))?;
-        let response_json: serde_json::Value = serde_json::from_str(&response_text)
-            .map_err(|e| DataAvailabilityError::MintlayerError(e.to_string()))?;
-
-        tracing::info!(
-            "add root digest to mintlayer with L1 tx_info: {}",
-            serde_json::to_string(&response_json).unwrap()
-        );
-        match response_json.get("result") {
-            Some(tx_hash) => Ok(tx_hash.as_str().unwrap_or("").to_string()),
-            None => Err(DataAvailabilityError::MintlayerError(
-                "No tx_hash in response".into(),
-            )),
-        }
-    }
-
     async fn queue_mintlayer_batch(
         &self,
         mut tx: Connection<'_, Core>,
         hash: String,
     ) -> Result<(), DataAvailabilityError> {
-        let mut conn = self
-            .pool
-            .connection_tagged("data_availability_worker")
-            .await
-            .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-        let mut batches = conn
+        // Get all pending batches
+        let mut batches = tx
             .data_availability_dal()
             .get_pending_mintlayer_batches()
             .await
             .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-        let pending_mintlayer_batch = &mut PendingMintlayerBatch::new();
-
+        // Find a batch that's not full yet, or create a new one
         let batch = batches
             .iter_mut()
             .find(|b| {
                 b.status == OperationStatus::Pending && b.ipfs_hashes.len() < self.config.batch_size
             })
-            .unwrap_or_else(|| pending_mintlayer_batch);
+            .unwrap_or_else(|| {
+                // Create a new batch if none exists or all are full
+                let mut new_batch = PendingMintlayerBatch::new();
+                batches.push(new_batch);
+                batches.last_mut().unwrap()
+            });
+
+        // Add the hash to the batch
         batch.ipfs_hashes.push(hash);
 
+        // Mark as ready if the batch is full
         if batch.ipfs_hashes.len() >= self.config.batch_size {
-            batch.status = OperationStatus::Pending;
+            batch.status = OperationStatus::Ready;
         }
 
+        // Update the batch in the database
         tx.data_availability_dal()
             .update_mintlayer_batch(batch)
-            .await
-            .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
-        tx.commit()
             .await
             .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
@@ -609,4 +444,24 @@ impl DataAvailabilityWorker {
             Err(e) => Err(DataAvailabilityError::IPFSError(e.to_string())),
         }
     }
+}
+
+// Factory function to create a worker with real implementations
+pub async fn create_data_availability_worker(
+    config: DataAvailabilityConfig,
+    pool: ConnectionPool<Core>,
+    metrics: Arc<DataAvailabilityMetrics>,
+) -> Result<DataAvailabilityWorker<impl IPFSService, impl MintlayerService>, DataAvailabilityError> {
+    use super::services::{FourEverLandIPFSService, MintlayerRpcService};
+    
+    let ipfs_service = Arc::new(FourEverLandIPFSService::new(config.ipfs));
+    let mintlayer_service = Arc::new(MintlayerRpcService::new(config.mintlayer));
+    
+    Ok(DataAvailabilityWorker::new(
+        config.worker,
+        pool,
+        metrics,
+        ipfs_service,
+        mintlayer_service,
+    ))
 }
