@@ -35,7 +35,10 @@ export function updateContractsEnv(initEnv: string, deployLog: String, envVars: 
 
 export async function initializeValidator(args: any[]): Promise<void> {
     await utils.confirmAction();
-    await utils.spawn(`yarn l1-contracts initialize-validator ${args.join(' ')} | tee initializeValidator.log`);
+
+    const privateKey = process.env.VALIDATOR_PRIVATE_KEY;
+
+    await utils.spawn(`yarn l1-contracts initialize-validator ${[...args, privateKey ? `--private-key ${privateKey}` : ''].join(' ')} | tee initializeValidator.log`);
 }
 
 export async function initializeGovernance(): Promise<void> {

@@ -5,13 +5,13 @@
 network = "localhost"
 # Name of current ZKsync network
 # Used for Sentry environment
-zksync_network = "localhost"
+zksync_network = "zkthunder"
 # ID of current ZKsync network treated as ETH network ID.
 # Used to distinguish ZKsync from other Web3-capable networks.
-zksync_network_id = 270
+zksync_network_id = 4237
 
 [chain.state_keeper]
-fee_account_addr = "0xde03a0B5963f75f1C8485B355fF6D30f3093BDE7"
+fee_account_addr = "0xfDA9E300B9f6678495b071fD34f45F2B771A06f6"
 
 # Denotes the amount of slots for transactions in the block.
 transaction_slots = 250

@@ -58,18 +58,25 @@ export async function isOperator(chainId: string, walletAddress: string): Promis
 }
 
 export function getWalletKeys(): WalletKey[] {
-    const testConfigPath = path.join(process.env.ZKSYNC_HOME as string, `etc/test_config/constant`);
-    const ethTestConfig = JSON.parse(fs.readFileSync(`${testConfigPath}/eth.json`, { encoding: 'utf-8' }));
-    const NUM_TEST_WALLETS = 10;
-    const baseWalletPath = "m/44'/60'/0'/0/";
+    // Use private keys from environment variables
+    const privateKeys = process.env.API_WEB3_JSON_RPC_ACCOUNT_PKS
+        ? process.env.API_WEB3_JSON_RPC_ACCOUNT_PKS.split(',').map(key => key.trim())
+        : [];
+    
+    // If no keys are provided in environment, log a warning
+    if (privateKeys.length === 0) {
+        console.warn('No account private keys found in API_WEB3_JSON_RPC_ACCOUNT_PKS environment variable');
+    }
+
     const walletKeys: WalletKey[] = [];
-    for (let i = 0; i < NUM_TEST_WALLETS; ++i) {
-        const ethWallet = ethers.Wallet.fromMnemonic(ethTestConfig.test_mnemonic as string, baseWalletPath + i);
+    for (const privateKey of privateKeys) {
+        const wallet = new ethers.Wallet(privateKey);
         walletKeys.push({
-            address: ethWallet.address,
-            privateKey: ethWallet.privateKey
+            address: wallet.address,
+            privateKey: privateKey
         });
     }
+    
     return walletKeys;
 }
 
