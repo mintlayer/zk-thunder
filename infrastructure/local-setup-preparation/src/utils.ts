@@ -59,8 +59,8 @@ export async function isOperator(chainId: string, walletAddress: string): Promis
 
 export function getWalletKeys(): WalletKey[] {
     // Use private keys from environment variables
-    const privateKeys = process.env.API_WEB3_JSON_RPC_ACCOUNT_PKS
-        ? process.env.API_WEB3_JSON_RPC_ACCOUNT_PKS.split(',').map(key => key.trim())
+    const privateKeys = process.env.PRE_FUNDED_ACCOUNT_PKS
+        ? process.env.PRE_FUNDED_ACCOUNT_PKS.split(',').map(key => key.trim())
         : [];
     
     // If no keys are provided in environment, log a warning

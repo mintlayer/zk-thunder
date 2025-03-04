@@ -155,12 +155,30 @@ Your `.env` file must configure the following roles, using addresses that are pr
    GOVERNOR_PRIVATE_KEY=<private-key>
    GOVERNOR_ADDRESS=<derived-address>
    CHAIN_ADMIN_ADDRESS=<derived-address>
+   GOVERNANCE_PRIVATE_KEY=<private-key>
    ```
 
-   - Basic setup: Use the same private key for DEPLOYER and GOVERNOR roles
+   - Basic setup: Use the same private key for DEPLOYER, GOVERNOR and GOVERNANCE roles
    - Advanced setup: Can use different addresses for granular permissions
    - All addresses must be pre-funded in reth_config
    - GOVERNOR_ADDRESS and CHAIN_ADMIN_ADDRESS should be derived from their respective private keys
+
+5. **Validator Account**
+
+   ```
+   VALIDATOR_PRIVATE_KEY=<private-key>
+   ```
+
+   - Responsible for validating transactions and blocks
+   - Must be pre-funded in reth_config
+
+6. **Pre-funded Account**
+
+   ```
+   PRE_FUNDED_ACCOUNT_PKS=<private-key>
+   ```
+
+   - Pre-funded account private keys
 
 #### L1 Chain Configuration
 
