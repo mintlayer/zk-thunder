@@ -388,10 +388,6 @@ impl<I: IPFSService + 'static, M: MintlayerService + 'static> DataAvailabilityWo
             .await
             .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
         Ok(())
     }
 }
