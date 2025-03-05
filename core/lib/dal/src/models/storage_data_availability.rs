@@ -64,7 +64,6 @@ pub struct PendingIpfsOperation {
     pub created_at: DateTime<Utc>,
     pub status: OperationStatus,
     pub ipfs_hash: Option<String>,
-    pub requires_mintlayer: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,20 +75,7 @@ pub struct PendingMintlayerBatch {
     pub created_at: DateTime<Utc>,
     pub status: OperationStatus,
     pub tx_hash: Option<String>,
-}
-
-impl PendingMintlayerBatch {
-    pub fn new() -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            ipfs_hashes: Vec::new(),
-            attempts: 0,
-            last_attempt: None,
-            created_at: Utc::now(),
-            status: OperationStatus::Pending,
-            tx_hash: None,
-        }
-    }
+    pub group_ipfs_hash: Option<String>,
 }
 
 /// Represents a blob in the data availability layer.

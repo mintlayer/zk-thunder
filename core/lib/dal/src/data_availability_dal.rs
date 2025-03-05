@@ -228,8 +228,7 @@ impl DataAvailabilityDal<'_, '_> {
             SELECT 
                 id, operation_type, data, attempts, 
                 last_attempt as "last_attempt", created_at,
-                status::text as "status!", ipfs_hash,
-                requires_mintlayer
+                status::text as "status!", ipfs_hash
             FROM pending_ipfs_operations
             WHERE status::text = 'pending'
             OR (status::text = 'failed' AND attempts < $1)
@@ -263,7 +262,6 @@ impl DataAvailabilityDal<'_, '_> {
                         _ => panic!("Invalid operation_type"),
                     },
                     ipfs_hash: row.ipfs_hash,
-                    requires_mintlayer: row.requires_mintlayer,
                 })
             })
             .collect()
@@ -274,7 +272,7 @@ impl DataAvailabilityDal<'_, '_> {
             r#"
             SELECT 
                 id, ipfs_hashes, attempts, last_attempt,
-                created_at, status::text as "status!", tx_hash
+                created_at, status::text as "status!", group_ipfs_hash, tx_hash
             FROM pending_mintlayer_batches
             WHERE status::text = 'pending'
             OR (status::text = 'failed' AND attempts < $1)
@@ -305,6 +303,7 @@ impl DataAvailabilityDal<'_, '_> {
                         "failed" => OperationStatus::Failed("".to_string()),
                         _ => panic!("Invalid operation_status"),
                     },
+                    group_ipfs_hash: row.group_ipfs_hash,
                     tx_hash: row.tx_hash,
                 })
             })
@@ -338,11 +337,12 @@ impl DataAvailabilityDal<'_, '_> {
         sqlx::query!(
             r#"
             INSERT INTO pending_mintlayer_batches (
-                id, ipfs_hashes, status, attempts, last_attempt, created_at
-            ) VALUES ($1, $2, $3::text::operation_status, $4, $5, $6)
+                id, ipfs_hashes, status, attempts, last_attempt, created_at, group_ipfs_hash
+            ) VALUES ($1, $2, $3::text::operation_status, $4, $5, $6, $7)
             ON CONFLICT (id) DO UPDATE SET 
                 ipfs_hashes = $2,
-                status = $3::text::operation_status
+                status = $3::text::operation_status,
+                group_ipfs_hash = $7
             "#,
             batch.id,
             &batch.ipfs_hashes,
@@ -350,6 +350,7 @@ impl DataAvailabilityDal<'_, '_> {
             batch.attempts as i32,
             batch.last_attempt,
             batch.created_at,
+            batch.group_ipfs_hash,
         )
         .instrument("update_mintlayer_batch")
         .with_arg("id", &batch.id)
@@ -358,6 +359,7 @@ impl DataAvailabilityDal<'_, '_> {
         .with_arg("attempts", &batch.attempts)
         .with_arg("last_attempt", &batch.last_attempt)
         .with_arg("created_at", &batch.created_at)
+        .with_arg("group_ipfs_hash", &batch.group_ipfs_hash)
         .execute(self.storage)
         .await?;
         Ok(())
@@ -405,9 +407,8 @@ impl DataAvailabilityDal<'_, '_> {
             r#"
             INSERT INTO pending_ipfs_operations (
                 id, operation_type, data, attempts,
-                last_attempt, created_at, status, ipfs_hash,
-                requires_mintlayer
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7::text::operation_status, $8, $9) 
+                last_attempt, created_at, status, ipfs_hash
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7::text::operation_status, $8) 
             "#,
             op.id,
             op.operation_type.to_string(),
@@ -416,8 +417,7 @@ impl DataAvailabilityDal<'_, '_> {
             op.last_attempt,
             op.created_at,
             op.status.to_string(),
-            op.ipfs_hash,
-            op.requires_mintlayer
+            op.ipfs_hash
         )
         .instrument("save_pending_operation")
         .with_arg("id", &op.id)
@@ -428,7 +428,6 @@ impl DataAvailabilityDal<'_, '_> {
         .with_arg("created at", &op.created_at)
         .with_arg("status", &op.status)
         .with_arg("ipfs hash", &op.ipfs_hash)
-        .with_arg("requires mintlayer", &op.requires_mintlayer)
         .execute(self.storage)
         .await?;
         Ok(())

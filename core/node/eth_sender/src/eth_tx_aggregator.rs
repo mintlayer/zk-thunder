@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use chrono::Utc;
 use serde_json;
@@ -34,9 +34,7 @@ use zksync_types::{
 use super::aggregated_operations::AggregatedOperation;
 use crate::{
     data_availability::{
-        error::DataAvailabilityError,
-        metrics::DataAvailabilityMetrics,
-        worker::{DataAvailabilityWorker, WorkerConfig},
+        config::DataAvailabilityConfig, error::DataAvailabilityError, metrics::DataAvailabilityMetrics, services::{IPFSService, MintlayerService}, worker::{create_data_availability_worker, DataAvailabilityWorker}
     },
     metrics::{PubdataKind, METRICS},
     utils::agg_l1_batch_base_cost,
@@ -74,7 +72,7 @@ pub struct EthTxAggregator {
     /// address.
     custom_commit_sender_addr: Option<Address>,
     pool: ConnectionPool<Core>,
-    data_availability_worker: Option<DataAvailabilityWorker>,
+    data_availability_worker: Option<DataAvailabilityWorker<Box<dyn IPFSService + 'static>, Box<dyn MintlayerService + 'static>>>,
     metrics: Arc<DataAvailabilityMetrics>,
 }
 
@@ -114,20 +112,20 @@ impl EthTxAggregator {
 
         let metrics = Arc::new(DataAvailabilityMetrics::default());
 
-        let worker_config = WorkerConfig {
-            ipfs_retry_base_delay: Duration::from_secs(1),
-            ipfs_retry_max_delay: Duration::from_secs(60),
-            ipfs_max_attempts: 5,
-            mintlayer_retry_base: Duration::from_secs(1),
-            mintlayer_retry_max_delay: Duration::from_secs(60),
-            mintlayer_max_attempts: 5,
-            cleanup_interval: Duration::from_secs(300),
-            cleanup_days_threshold: 7,
-            batch_size: 6,
+        let data_availability_config = DataAvailabilityConfig::from_env().unwrap();
+
+        let data_availability_worker = match create_data_availability_worker(
+            data_availability_config,
+            pool.clone(),
+            metrics.clone(),
+        ).await {
+            Ok(worker) => Some(worker),
+            Err(e) => {
+                tracing::error!("Failed to create data availability worker: {}", e);
+                None
+            }
         };
 
-        let data_availability_worker =
-            DataAvailabilityWorker::new(worker_config, pool.clone(), metrics.clone());
         let mut eth_tx_aggregator = Self {
             config,
             aggregator,
@@ -141,7 +139,7 @@ impl EthTxAggregator {
             rollup_chain_id,
             custom_commit_sender_addr,
             pool,
-            data_availability_worker: Some(data_availability_worker),
+            data_availability_worker,
             metrics,
         };
 
@@ -445,7 +443,6 @@ impl EthTxAggregator {
             created_at: Utc::now(),
             status: OperationStatus::Pending,
             ipfs_hash: None,
-            requires_mintlayer: true,
         };
 
         let mut conn = match self.pool.connection_tagged("eth_tx_aggregator").await {

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT \n                id, operation_type, data, attempts, \n                last_attempt as \"last_attempt\", created_at,\n                status::text as \"status!\", ipfs_hash,\n                requires_mintlayer\n            FROM pending_ipfs_operations\n            WHERE status::text = 'pending'\n            OR (status::text = 'failed' AND attempts < $1)\n            ORDER BY created_at ASC\n            LIMIT $2\n            ",
+  "query": "\n            SELECT \n                id, operation_type, data, attempts, \n                last_attempt as \"last_attempt\", created_at,\n                status::text as \"status!\", ipfs_hash\n            FROM pending_ipfs_operations\n            WHERE status::text = 'pending'\n            OR (status::text = 'failed' AND attempts < $1)\n            ORDER BY created_at ASC\n            LIMIT $2\n            ",
   "describe": {
     "columns": [
       {
@@ -42,11 +42,6 @@
         "ordinal": 7,
         "name": "ipfs_hash",
         "type_info": "Text"
-      },
-      {
-        "ordinal": 8,
-        "name": "requires_mintlayer",
-        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -63,9 +58,8 @@
       true,
       false,
       null,
-      true,
-      false
+      true
     ]
   },
-  "hash": "998834511dd42cb945ab1f273082139590d0efa4428b47ce588e86bbc5ae5176"
+  "hash": "c99058f018f3b23cb497ba5108b471e9282f8d709cfcfdb04c6309c4238c0802"
 }

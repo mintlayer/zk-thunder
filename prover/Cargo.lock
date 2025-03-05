@@ -7947,6 +7947,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "uuid",
  "vise",
  "zksync_consensus_roles",
  "zksync_consensus_storage",

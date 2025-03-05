@@ -1,0 +1,2 @@
+ALTER TABLE pending_mintlayer_batches
+ADD COLUMN group_ipfs_hash TEXT;

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT \n                id, ipfs_hashes, attempts, last_attempt,\n                created_at, status::text as \"status!\", tx_hash\n            FROM pending_mintlayer_batches\n            WHERE status::text = 'pending'\n            OR (status::text = 'failed' AND attempts < $1)\n            ORDER BY created_at ASC\n            LIMIT $2\n            ",
+  "query": "\n            SELECT \n                id, ipfs_hashes, attempts, last_attempt,\n                created_at, status::text as \"status!\", group_ipfs_hash, tx_hash\n            FROM pending_mintlayer_batches\n            WHERE status::text = 'pending'\n            OR (status::text = 'failed' AND attempts < $1)\n            ORDER BY created_at ASC\n            LIMIT $2\n            ",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,11 @@
       },
       {
         "ordinal": 6,
+        "name": "group_ipfs_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
         "name": "tx_hash",
         "type_info": "Text"
       }
@@ -52,8 +57,9 @@
       true,
       false,
       null,
+      true,
       true
     ]
   },
-  "hash": "191da7851e4146a21ba5876e68d268d232a08c7a5a9b755d2f1577b1d330d263"
+  "hash": "74e30f25a67ae8221b77d0862fa29cd09c082c54323c715ffd752e7f42371bb2"
 }

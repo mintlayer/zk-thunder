@@ -1,0 +1,1 @@
+ALTER TABLE pending_ipfs_operations DROP COLUMN IF EXISTS requires_mintlayer;

@@ -1,29 +1,30 @@
 use async_trait::async_trait;
+use base64::Engine;
 use std::io::Cursor;
+use std::fmt::Debug;
 
 use super::{config::{IPFSConfig, MintlayerConfig}, error::DataAvailabilityError};
 
 #[async_trait]
-pub trait IPFSService: Send + Sync {
+pub trait IPFSService: Send + Sync + Debug {
     async fn upload(&self, data: &[u8]) -> Result<String, DataAvailabilityError>;
 }
 
 #[async_trait]
-pub trait MintlayerService: Send + Sync {
+pub trait MintlayerService: Send + Sync + Debug {
     async fn initialize_wallet(&self) -> Result<(), DataAvailabilityError>;
     async fn submit_hashes(&self, ipfs_hashes: &[String]) -> Result<String, DataAvailabilityError>;
 }
 
+#[derive(Debug)]
 pub struct FourEverLandIPFSService {
     config: IPFSConfig,
-    client: reqwest::Client,
 }
 
 impl FourEverLandIPFSService {
     pub fn new(config: IPFSConfig) -> Self {
         Self {
-            config,
-            client: reqwest::Client::new(),
+            config
         }
     }
 
@@ -90,6 +91,7 @@ impl IPFSService for FourEverLandIPFSService {
     }
 }
 
+#[derive(Debug)]
 pub struct MintlayerRpcService {
     config: MintlayerConfig,
     client: reqwest::Client,
@@ -148,7 +150,7 @@ impl MintlayerService for MintlayerRpcService {
             }),
         };
 
-        let response = self.client
+        let _response = self.client
             .post(&self.config.rpc_url)
             .headers(headers.clone())
             .json(&payload)
@@ -255,5 +257,23 @@ impl MintlayerService for MintlayerRpcService {
                 "No tx_hash in response".into(),
             )),
         }
+    }
+}
+
+#[async_trait]
+impl IPFSService for Box<dyn IPFSService + 'static> {
+    async fn upload(&self, data: &[u8]) -> Result<String, DataAvailabilityError> {
+        (**self).upload(data).await
+    }
+}
+
+#[async_trait]
+impl MintlayerService for Box<dyn MintlayerService + 'static> {
+    async fn initialize_wallet(&self) -> Result<(), DataAvailabilityError> {
+        (**self).initialize_wallet().await
+    }
+    
+    async fn submit_hashes(&self, ipfs_hashes: &[String]) -> Result<String, DataAvailabilityError> {
+        (**self).submit_hashes(ipfs_hashes).await
     }
 } 

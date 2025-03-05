@@ -1,6 +1,4 @@
 use std::time::{Duration, Instant};
-use zksync_dal::{Connection, Core, CoreDal};
-use super::error::DataAvailabilityError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CircuitBreakerState {
@@ -80,42 +78,8 @@ impl CircuitBreaker {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.state = CircuitBreakerState::Closed;
-        self.failure_count = 0;
-        self.last_failure_time = None;
-    }
-
     pub fn get_state(&mut self) -> CircuitBreakerState {
         self.check_state();
         self.state
-    }
-}
-
-pub async fn with_transaction<F, T>(
-    conn: &mut Connection<'_, Core>,
-    f: F,
-) -> Result<T, DataAvailabilityError>
-where
-    F: FnOnce(&mut Connection<'_, Core>) -> Result<T, DataAvailabilityError> + Send,
-    T: Send,
-{
-    let mut tx = conn
-        .start_transaction()
-        .await
-        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
-    match f(&mut tx).await {
-        Ok(result) => {
-            tx.commit()
-                .await
-                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-            Ok(result)
-        }
-        Err(e) => {
-            // Attempt to roll back, but don't propagate rollback errors
-            let _ = tx.rollback().await;
-            Err(e)
-        }
     }
 }

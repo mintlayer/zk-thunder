@@ -12,7 +12,7 @@ pub async fn with_exponential_backoff<F, Fut, T, E>(
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
-    E: From<DataAvailabilityError>,
+    E: From<DataAvailabilityError> + std::fmt::Debug,
 {
     let mut delay = base_delay;
     let mut attempts = 0;

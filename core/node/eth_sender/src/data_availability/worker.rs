@@ -6,9 +6,8 @@ use super::{
     retry::with_exponential_backoff,
     services::{IPFSService, MintlayerService},
 };
-use base64::Engine;
-use s3::Bucket;
-use std::{io::Cursor, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
+use chrono::Utc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 use uuid::Uuid;
@@ -16,38 +15,10 @@ use zksync_dal::{
     data_availability_dal::{OperationStatus, PendingIpfsOperation, PendingMintlayerBatch},
     Connection, ConnectionPool, Core, CoreDal,
 };
-
-// Helper function for transaction management
-async fn with_transaction<F, T>(
-    conn: &mut Connection<'_, Core>,
-    f: F,
-) -> Result<T, DataAvailabilityError>
-where
-    F: FnOnce(&mut Connection<'_, Core>) -> Result<T, DataAvailabilityError> + Send,
-    T: Send,
-{
-    let mut tx = conn
-        .start_transaction()
-        .await
-        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-
-    match f(&mut tx).await {
-        Ok(result) => {
-            tx.commit()
-                .await
-                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-            Ok(result)
-        }
-        Err(e) => {
-            // Attempt to roll back, but don't propagate rollback errors
-            let _ = tx.rollback().await;
-            Err(e)
-        }
-    }
-}
+use serde_json;
 
 #[derive(Debug)]
-pub struct DataAvailabilityWorker<I: IPFSService, M: MintlayerService> {
+pub struct DataAvailabilityWorker<I: IPFSService + 'static, M: MintlayerService + 'static> {
     config: WorkerConfig,
     pool: ConnectionPool<Core>,
     metrics: Arc<DataAvailabilityMetrics>,
@@ -57,7 +28,7 @@ pub struct DataAvailabilityWorker<I: IPFSService, M: MintlayerService> {
     mintlayer_circuit_breaker: Mutex<CircuitBreaker>,
 }
 
-impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
+impl<I: IPFSService + 'static, M: MintlayerService + 'static> DataAvailabilityWorker<I, M> {
     pub fn new(
         config: WorkerConfig,
         pool: ConnectionPool<Core>,
@@ -109,6 +80,8 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
             Ok(hash) => {
                 self.metrics.ipfs_success.inc();
                 self.ipfs_circuit_breaker.lock().await.record_success();
+                op.status = OperationStatus::Completed;
+                op.ipfs_hash = Some(hash.clone());
 
                 let mut conn = self
                     .pool
@@ -116,21 +89,14 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
                     .await
                     .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-                with_transaction(&mut conn, |tx| async move {
-                    op.status = OperationStatus::Completed;
-                    op.ipfs_hash = Some(hash.clone());
-                    tx.data_availability_dal()
-                        .update_ipfs_operations(op)
-                        .await
-                        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+                conn.data_availability_dal()
+                    .update_ipfs_operations(op)
+                    .await
+                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-                    if op.requires_mintlayer {
-                        self.queue_mintlayer_batch(tx, hash).await?;
-                    }
-                    
-                    Ok(())
-                })
-                .await
+                self.queue_mintlayer_batch(conn, hash).await?;
+                
+                Ok(())
             }
             Err(e) => {
                 self.metrics.ipfs_errors.inc();
@@ -147,15 +113,14 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
         op: &mut PendingIpfsOperation,
     ) -> Result<String, DataAvailabilityError> {
         let data = op.data.clone();
-        
+
         with_exponential_backoff(
             || async {
-                op.attempts += 1;
                 self.ipfs_service.upload(&data).await
             },
             self.config.ipfs_retry_base_delay,
             self.config.ipfs_retry_max_delay,
-            self.config.ipfs_max_attempts - op.attempts,
+            self.config.ipfs_max_attempts,
             "IPFS",
         )
         .await
@@ -179,8 +144,21 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
         }
         drop(circuit_breaker); // Release the lock before the long-running operation
 
+        if batch.group_ipfs_hash.is_none() {
+            let data = serde_json::to_string(&batch.ipfs_hashes)
+                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+
+            let root_hash = self.ipfs_service.upload(data.as_bytes()).await?;
+            batch.group_ipfs_hash = Some(root_hash);
+
+            let mut conn = self.pool.connection_tagged("data_availability_worker").await
+                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+            conn.data_availability_dal().update_mintlayer_batch(batch).await
+                .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+        }
+
         let start = Instant::now();
-        let result = self.submit_to_mintlayer_with_backoff(batch).await;
+        let result = self.submit_root_to_mintlayer_with_backoff(batch).await;
         let duration = start.elapsed();
         self.metrics.mintlayer_operation_duration.observe(duration);
 
@@ -195,18 +173,15 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
                     .await
                     .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-                with_transaction(&mut conn, |tx| async move {
-                    batch.status = OperationStatus::Completed;
-                    batch.tx_hash = Some(tx_hash);
+                batch.status = OperationStatus::Completed;
+                batch.tx_hash = Some(tx_hash);
 
-                    tx.data_availability_dal()
-                        .update_mintlayer_batch(batch)
-                        .await
-                        .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
-                    
-                    Ok(())
-                })
-                .await
+                conn.data_availability_dal()
+                    .update_mintlayer_batch(batch)
+                    .await
+                    .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
+
+                Ok(())
             }
             Err(e) => {
                 self.metrics.mintlayer_errors.inc();
@@ -218,20 +193,22 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
         }
     }
 
-    async fn submit_to_mintlayer_with_backoff(
+    async fn submit_root_to_mintlayer_with_backoff(
         &self,
         batch: &mut PendingMintlayerBatch,
     ) -> Result<String, DataAvailabilityError> {
-        let ipfs_hashes = batch.ipfs_hashes.clone();
+        let root_hash = batch.group_ipfs_hash.clone()
+            .ok_or_else(|| DataAvailabilityError::DatabaseError("Root IPFS hash is missing".into()))?;
+
+        let hashes = vec![root_hash];
         
         with_exponential_backoff(
             || async {
-                batch.attempts += 1;
-                self.mintlayer_service.submit_hashes(&ipfs_hashes).await
+                self.mintlayer_service.submit_hashes(&hashes).await
             },
             self.config.mintlayer_retry_base,
             self.config.mintlayer_retry_max_delay,
-            self.config.mintlayer_max_attempts - batch.attempts,
+            self.config.mintlayer_max_attempts,
             "Mintlayer",
         )
         .await
@@ -352,15 +329,17 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
                     Ok(batches) => {
                         self.metrics.mintlayer_queue_size.set(batches.len());
                         for mut batch in batches {
-                            if let Err(e) = self.process_mintlayer_batch(&mut batch).await {
-                                tracing::error!(
-                                    "Failed to process Mintlayer batch {}: {}",
-                                    batch.id,
-                                    e
-                                );
+                            if batch.ipfs_hashes.len() >= self.config.batch_size {
+                                if let Err(e) = self.process_mintlayer_batch(&mut batch).await {
+                                    tracing::error!(
+                                        "Failed to process Mintlayer batch {}: {}",
+                                        batch.id,
+                                        e
+                                    );
+                                }
                             }
                         }
-                    }
+                    },
                     Err(e) => {
                         tracing::error!("Failed to get pending Mintlayer batches: {}", e);
                     }
@@ -375,93 +354,63 @@ impl<I: IPFSService, M: MintlayerService> DataAvailabilityWorker<I, M> {
         mut tx: Connection<'_, Core>,
         hash: String,
     ) -> Result<(), DataAvailabilityError> {
-        // Get all pending batches
         let mut batches = tx
             .data_availability_dal()
             .get_pending_mintlayer_batches()
             .await
             .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-        // Find a batch that's not full yet, or create a new one
-        let batch = batches
-            .iter_mut()
-            .find(|b| {
-                b.status == OperationStatus::Pending && b.ipfs_hashes.len() < self.config.batch_size
-            })
-            .unwrap_or_else(|| {
-                // Create a new batch if none exists or all are full
-                let mut new_batch = PendingMintlayerBatch::new();
-                batches.push(new_batch);
-                batches.last_mut().unwrap()
-            });
+        let batch_index = batches.iter().position(|b| {
+            b.status == OperationStatus::Pending && b.ipfs_hashes.len() < self.config.batch_size
+        });
 
-        // Add the hash to the batch
+        let batch = if let Some(index) = batch_index {
+            &mut batches[index]
+        } else {
+            let new_batch = PendingMintlayerBatch {
+                id: Uuid::new_v4(),
+                ipfs_hashes: Vec::new(),
+                attempts: 0,
+                last_attempt: None,
+                created_at: Utc::now(),
+                status: OperationStatus::Pending,
+                tx_hash: None,
+                group_ipfs_hash: None,
+            };
+            batches.push(new_batch);
+            batches.last_mut().unwrap()
+        };
+
         batch.ipfs_hashes.push(hash);
 
-        // Mark as ready if the batch is full
-        if batch.ipfs_hashes.len() >= self.config.batch_size {
-            batch.status = OperationStatus::Ready;
-        }
-
-        // Update the batch in the database
         tx.data_availability_dal()
             .update_mintlayer_batch(batch)
             .await
             .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-        Ok(())
-    }
+        tx.commit()
+            .await
+            .map_err(|e| DataAvailabilityError::DatabaseError(e.to_string()))?;
 
-    async fn upload_to_ipfs(
-        &self,
-        bucket: &Bucket,
-        doc_name: &str,
-        mut contents: Cursor<Vec<u8>>,
-    ) -> Result<String, DataAvailabilityError> {
-        match bucket.put_object_stream(&mut contents, doc_name).await {
-            Ok(response) => {
-                if response.status_code() == 200 {
-                    match bucket.head_object(doc_name).await {
-                        Ok((head, _)) => {
-                            if let Some(metadata) = head.metadata {
-                                if let Some(hash) = metadata.get("ipfs-hash") {
-                                    return Ok(hash.clone());
-                                }
-                            }
-                            Err(DataAvailabilityError::IPFSError(
-                                "Missing IPFS hash in metadata".into(),
-                            ))
-                        }
-                        Err(e) => Err(DataAvailabilityError::IPFSError(e.to_string())),
-                    }
-                } else {
-                    Err(DataAvailabilityError::IPFSError(format!(
-                        "Upload failed with status: {}",
-                        response.status_code()
-                    )))
-                }
-            }
-            Err(e) => Err(DataAvailabilityError::IPFSError(e.to_string())),
-        }
+        Ok(())
     }
 }
 
-// Factory function to create a worker with real implementations
 pub async fn create_data_availability_worker(
     config: DataAvailabilityConfig,
     pool: ConnectionPool<Core>,
     metrics: Arc<DataAvailabilityMetrics>,
-) -> Result<DataAvailabilityWorker<impl IPFSService, impl MintlayerService>, DataAvailabilityError> {
+) -> Result<DataAvailabilityWorker<Box<dyn IPFSService>, Box<dyn MintlayerService>>, DataAvailabilityError> {
     use super::services::{FourEverLandIPFSService, MintlayerRpcService};
     
-    let ipfs_service = Arc::new(FourEverLandIPFSService::new(config.ipfs));
-    let mintlayer_service = Arc::new(MintlayerRpcService::new(config.mintlayer));
+    let ipfs_service: Box<dyn IPFSService> = Box::new(FourEverLandIPFSService::new(config.ipfs));
+    let mintlayer_service: Box<dyn MintlayerService> = Box::new(MintlayerRpcService::new(config.mintlayer));
     
     Ok(DataAvailabilityWorker::new(
         config.worker,
         pool,
         metrics,
-        ipfs_service,
-        mintlayer_service,
+        Arc::new(ipfs_service),
+        Arc::new(mintlayer_service),
     ))
 }
