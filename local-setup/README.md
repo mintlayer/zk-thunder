@@ -185,7 +185,7 @@ Your `.env` file must configure the following roles, using addresses that are pr
 
 The Layer 1 chain configuration is defined in `local-setup/reth_chaindata/reth_config`. This file configures the local Ethereum-compatible chain used as the L1 for the zkSync deployment.
 
-##### Chain Parameters
+##### L1 Chain Parameters
 
 - `chainId`: 9 - Unique identifier for this development chain
 - `gasLimit`: "0x1c9c380" (~30M gas) - Maximum gas per block
@@ -197,8 +197,33 @@ The Layer 1 chain configuration is defined in `local-setup/reth_chaindata/reth_c
 ##### Network Configuration
 
 - All major Ethereum upgrades (Homestead, EIP150, EIP155, DAO Fork, Frontier, Byzantium, Constantinople, Petersburg, Muir Glacier, Istanbul, Berlin, London, Shanghai, Cancun) are activated from block 0
-- Uses Clique PoA consensus with 0 period (instant blocks) and 30000 epoch length
+- Uses Clique PoA consensus with 6s period and 30000 epoch length
 - Terminal Total Difficulty is set to 0 (post-merge from start)
+
+##### Configuring L1 Block Time
+
+The L1 block time can be configured in the `docker-compose.yml` file through the Reth node service configuration. By default, it's set to 6 seconds (6000ms):
+
+```yaml
+reth:
+  command: >
+    node --metrics 0.0.0.0:9001 
+    --dev 
+    --datadir /rethdata 
+    --http 
+    --http.corsdomain "*" 
+    --http.addr 0.0.0.0 
+    --http.port 8545
+    --dev.block-time 6000ms
+    --chain /chaindata/reth_config
+```
+
+To adjust the block time:
+
+1. Modify the `--dev.block-time` parameter in the `reth` service command
+2. Values are specified in milliseconds (e.g., `6000ms` for 6 seconds)
+3. Shorter block times (e.g., `1000ms`) will result in faster L1 block production but may increase resource usage
+4. Longer block times (e.g., `12000ms`) will reduce resource usage but slow down L1 transaction confirmations
 
 ##### Important Notes
 
@@ -241,6 +266,81 @@ Example configuration (before manual replacement):
     }
 }
 ```
+
+## ⛓️ Chain Configuration
+
+### Block and Batch Structure
+
+ZK Thunder uses a hierarchical structure to process transactions:
+
+1. **Transactions**: Individual user operations
+2. **L2 Blocks (Miniblocks)**: Collections of transactions processed together
+3. **L1 Batches**: Groups of L2 blocks that are proven and committed to L1
+
+### Block Times and Batch Sizes
+
+#### L2 Block Configuration
+
+- **L2 Block Commit Deadline**: `CHAIN_STATE_KEEPER_MINIBLOCK_COMMIT_DEADLINE_MS=1000` (1 second)
+  - Controls how frequently L2 blocks are created
+  - New L2 blocks are sealed either when this time passes or when other criteria are met
+
+- **L2 Block Max Payload Size**: `CHAIN_STATE_KEEPER_MINIBLOCK_MAX_PAYLOAD_SIZE=1000000` (1MB)
+  - Maximum size of an L2 block's payload in bytes
+  - Blocks will be sealed when they approach this limit
+
+#### L1 Batch Configuration
+
+- **L1 Batch Commit Deadline**: `CHAIN_STATE_KEEPER_BLOCK_COMMIT_DEADLINE_MS=30000` (30 seconds)
+  - Maximum time before an L1 batch is unconditionally sealed
+  - Critical for controlling the timing of proof generation and L1 commitments
+
+- **Transaction Slots**: `CHAIN_STATE_KEEPER_TRANSACTION_SLOTS=250`
+  - Maximum number of transactions that can be included in an L1 batch
+  - Batches will be sealed when this limit is reached
+
+- **Max Gas Per Batch**: `CHAIN_STATE_KEEPER_MAX_GAS_PER_BATCH=200000000` (200M)
+  - Maximum amount of gas that can be used in a single L1 batch
+  - Derived from circuit limitations per batch
+
+- **Max Pubdata Per Batch**: `CHAIN_STATE_KEEPER_MAX_PUBDATA_PER_BATCH=100000` (100KB)
+  - Maximum amount of pubdata (in bytes) that can be published per batch
+  - Affects blob usage: <126KB uses 1 blob, 126-252KB uses 2 blobs
+
+- **Max Circuits Per Batch**: `CHAIN_STATE_KEEPER_MAX_CIRCUITS_PER_BATCH=24100`
+  - Maximum number of circuits that a batch can support
+  - Refers to "base layer" circuits, not including recursion layers
+
+#### Sealing Criteria
+
+Blocks and batches can be sealed (closed for new transactions) based on several criteria:
+
+- **Geometry Percentage**: Controls sealing based on payload size
+  - `CHAIN_STATE_KEEPER_CLOSE_BLOCK_AT_GEOMETRY_PERCENTAGE=0.95` (95%)
+  - `CHAIN_STATE_KEEPER_REJECT_TX_AT_GEOMETRY_PERCENTAGE=0.95` (95%)
+
+- **Gas Percentage**: Controls sealing based on gas usage
+  - `CHAIN_STATE_KEEPER_CLOSE_BLOCK_AT_GAS_PERCENTAGE=0.95` (95%)
+  - `CHAIN_STATE_KEEPER_REJECT_TX_AT_GAS_PERCENTAGE=0.95` (95%)
+
+- **ETH Params Percentage**: Controls sealing based on L1 parameters
+  - `CHAIN_STATE_KEEPER_CLOSE_BLOCK_AT_ETH_PARAMS_PERCENTAGE=0.95` (95%)
+  - `CHAIN_STATE_KEEPER_REJECT_TX_AT_ETH_PARAMS_PERCENTAGE=0.95` (95%)
+
+### Fee Model Configuration
+
+- **Fee Model Version**: `CHAIN_STATE_KEEPER_FEE_MODEL_VERSION=V2`
+  - V2 allows pubdata price to be independent from L1 gas price
+  - L2 gas price includes both proving/computation costs and L1 batch processing costs
+
+- **Minimal L2 Gas Price**: `CHAIN_STATE_KEEPER_MINIMAL_L2_GAS_PRICE=100000000` (100 Gwei)
+  - Minimum acceptable gas price for L2 transactions
+  - Includes cost of computation/proving and congestion premium
+
+- **Overhead Configuration**:
+  - `CHAIN_STATE_KEEPER_COMPUTE_OVERHEAD_PART=0.0` (0%)
+  - `CHAIN_STATE_KEEPER_PUBDATA_OVERHEAD_PART=1.0` (100%)
+  - `CHAIN_STATE_KEEPER_BATCH_OVERHEAD_L1_GAS=800000` (800K gas)
 
 Required manual replacements:
 
@@ -552,3 +652,94 @@ Options:
 - `--help`: Displays help message
 
 Preserving SSL certificates (default behavior) is useful for faster redeployment since you won't need to regenerate them.
+
+## 🚀 Deploying Changes to Production
+
+When you need to apply changes to the production environment, you'll need to follow a specific workflow to ensure your changes are properly built, tagged, and deployed.
+
+### Step-by-Step Deployment Guide
+
+1. **Make and Test Your Changes Locally**
+   - Develop and test your changes in a local development environment
+   - Ensure all tests pass and the application works as expected
+
+2. **Create and Push a Release Tag**
+   - The tag format must follow the pattern: `vX.Y.Z-zkthunder`
+   - Example: `v1.2.3-zkthunder`
+
+   ```bash
+   # Create the tag
+   git tag v1.2.3-zkthunder
+   
+   # Push the tag to the remote repository
+   git push origin v1.2.3-zkthunder
+   ```
+
+3. **Wait for CI/CD Pipeline**
+   - The CI/CD pipeline will automatically:
+     - Detect the new tag
+     - Build the Docker image
+     - Push the image to DockerHub with the appropriate tag
+   - You can monitor the build progress in your CI/CD dashboard
+
+4. **Deploy the New Image to Production**
+   - SSH into your production server
+   - Navigate to your deployment directory
+
+   ```bash
+   cd /path/to/local-setup
+   ```
+
+   - Pull the latest Docker image
+
+   ```bash
+   docker pull ${DOCKER_REGISTRY_ACCOUNT}/<service-name>:zkthunder
+   ```
+
+   - Restart the affected service(s)
+
+   ```bash
+   # To restart a specific service
+   docker compose up -d <service-name>
+   
+   # Or to pull and restart all services if needed
+   ./start.sh
+   ```
+
+5. **Verify the Deployment**
+   - Check that the service is running with the new version
+
+   ```bash
+   docker compose ps
+   ```
+
+   - Verify the application is functioning correctly by accessing it through your browser
+   - Check the logs for any errors
+
+   ```bash
+   docker compose logs -f <service-name>
+   ```
+
+### Important Notes
+
+- **Version Numbering**: Follow semantic versioning (X.Y.Z):
+  - X: Major version (breaking changes)
+  - Y: Minor version (new features, no breaking changes)
+  - Z: Patch version (bug fixes)
+
+- **Tag Format**: The `-zkthunder` suffix is required for the CI/CD pipeline to recognize it as a production release
+
+- **Rollback Procedure**: If issues are detected, you can roll back to a previous version:
+
+  ```bash
+  # Pull the previous working version
+  docker pull ${DOCKER_REGISTRY_ACCOUNT}/<service-name>:previous-tag
+  
+  # Update your docker-compose.yml to use the previous version
+  # Then restart the service
+  docker compose up -d --no-deps <service-name>
+  ```
+
+- **Environment Variables**: Ensure any new environment variables required by your changes are properly set in the production environment's `.env` file
+
+By following this deployment workflow, you can ensure smooth and consistent updates to your production environment.

@@ -7,7 +7,7 @@
 # latest2.0 - is the 'main' one.
 
 INSTANCE_TYPE=${1:-zkthunder}
-APP_DOMAIN='zkthunder.fi'
+APP_DOMAIN='testnet.zkthunder.fi'
 
 export INSTANCE_TYPE=$INSTANCE_TYPE
 
