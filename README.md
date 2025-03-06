@@ -291,7 +291,6 @@ proxy-relay:
       - LEGACY_BRIDGE_TESTING=1
       # - IPFS_API_URL=http://ipfs:5001
       - ML_RPC_URL=http://host.docker.internal:13034 # change to mainnet if needed
-      - ML_BATCH_SIZE=10 # change if necessary
       - 4EVERLAND_API_KEY= XXXXX
       - 4EVERLAND_SECRET_KEY= XXXX
       - 4EVERLAND_BUCKET_NAME=zkthunder # only for test
@@ -316,8 +315,6 @@ inside the docker can access the Mintlayer network.
 In zkthunder’s environment settings:
 
 - **ML_RPC_URL** stands for the RPC wallet port of Mintlayer.
-
-- **ML_BATCH_SIZE** controls the frequency of sending data to Mintlayer.
 
 - **4EVERLAND_API_KEY, 4EVERLAND_SECRET_KEY, 4EVERLAND_BUCKET_NAME** these three variables stand for a specific bucket
   on 4everland, we upload the block information to it.
@@ -344,14 +341,14 @@ tracing::info!( "put {} to ipfs and get response code: {:?}",
 
 Note that three batches is related to one block. And every time we add a batch’s data to the 4everland bucket, the
 storage network will respond with an ipfs hash value. We collect such value until the number of responses reach the
-threshold of **BATCH_SIZE\*3**.
+threshold of **BATCH_SIZE**.
 
 Then, we upload these all hash values as a file to 4everland storage:
 
 ```rust
 
 // if block_number reaches the BATCH_SIZE, report the hashes to ipfs and then mintlayer
-let batch_size: usize = env::var("ML_BATCH_SIZE")
+let batch_size: usize = env::var("BATCH_SIZE")
                         .ok()
                         .and_then(|v| v.parse().ok())
                         .unwrap_or(10  as  usize);

@@ -98,6 +98,7 @@ Default metrics collected from:
 - `4EVERLAND_API_KEY`: API key from 4EVERLAND
 - `4EVERLAND_SECRET_KEY`: Secret key from 4EVERLAND
 - `4EVERLAND_BUCKET_NAME`: Your bucket name in 4EVERLAND
+- `BATCH_SIZE`: The number of IPFS CIDs to consolidate into a single IPFS CID batch, should be a multiple of 3
 
 #### MintLayer Configuration
 
@@ -402,6 +403,10 @@ All services will be accessible as subdomains of this domain.
 3. Set secure passwords for:
    - `ML_TESTNET_NODE_RPC_PASSWORD`
    - `ML_TESTNET_WALLET_RPC_DAEMON_RPC_PASSWORD`
+
+
+#### Chain State Keeper Configuration
+- `CHAIN_STATE_KEEPER_BLOCK_COMMIT_DEADLINE_MS`: This variable defines the maximum time limit, in milliseconds, for the batch commit process to Layer 1
 
 ### Deploying L2 Faucet
 

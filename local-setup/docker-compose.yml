@@ -143,7 +143,7 @@ services:
       --http.corsdomain "*" 
       --http.addr 0.0.0.0 
       --http.port 8545
-      --dev.block-time 2000ms
+      --dev.block-time 6000ms
       --chain /chaindata/reth_config
     environment:
       RUST_LOG: ${RUST_LOG:-info}
