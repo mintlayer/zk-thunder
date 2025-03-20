@@ -64,7 +64,7 @@ echo -e "│ ${ORANGE}L1 Explorer API         ${GREEN}│ ${BLUE}https://l1api.$
 echo -e "│ ${ORANGE}L2 RPC                  ${GREEN}│ ${BLUE}https://rpc.${APP_DOMAIN}${GREEN}               │ ${DARKGRAY}HTTP RPC Endpoint for L2                         ${GREEN}│"
 echo -e "│ ${ORANGE}L2 WebSocket            ${GREEN}│ ${BLUE}wss://ws.${APP_DOMAIN}${GREEN}                  │ ${DARKGRAY}WebSocket Endpoint for L2                        ${GREEN}│"
 echo -e "│ ${ORANGE}L2 Health Check         ${GREEN}│ ${BLUE}https://health.${APP_DOMAIN}${GREEN}            │ ${DARKGRAY}Health Check Endpoint for L2                     ${GREEN}│"
-echo -e "│ ${ORANGE}L2 Explorer             ${GREEN}│ ${BLUE}https://l2explorer.${APP_DOMAIN}${GREEN}        │ ${DARKGRAY}Block Explorer for L2                            ${GREEN}│"
+echo -e "│ ${ORANGE}L2 Explorer             ${GREEN}│ ${BLUE}https://explorer.${APP_DOMAIN}${GREEN}          │ ${DARKGRAY}Block Explorer for L2                            ${GREEN}│"
 echo -e "│ ${ORANGE}L2 Explorer API         ${GREEN}│ ${BLUE}https://l2api.${APP_DOMAIN}${GREEN}             │ ${DARKGRAY}API for L2 Block Explorer                        ${GREEN}│"
 echo -e "│ ${ORANGE}L2 Explorer Metrics     ${GREEN}│ ${BLUE}https://l2metrics.${APP_DOMAIN}${GREEN}         │ ${DARKGRAY}Metrics for L2 Block Explorer                    ${GREEN}│"
 echo -e "│ ${ORANGE}HyperExplorer           ${GREEN}│ ${BLUE}https://hyperexplorer.${APP_DOMAIN}${GREEN}     │ ${DARKGRAY}Explorer for communication between ZK Chains     ${GREEN}│"

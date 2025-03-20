@@ -339,7 +339,7 @@ services:
       - "traefik.http.services.explorer-metrics-service.loadbalancer.server.port=${METRICS_PORT}"
       # CORS
       - "traefik.http.middlewares.explorer-cors.headers.accesscontrolallowmethods=GET,POST,PUT,DELETE,OPTIONS"
-      - "traefik.http.middlewares.explorer-cors.headers.accesscontrolalloworiginlist=https://l2explorer.${APP_DOMAIN},https://hyperexplorer.${APP_DOMAIN}"
+      - "traefik.http.middlewares.explorer-cors.headers.accesscontrolalloworiginlist=https://explorer.${APP_DOMAIN},https://hyperexplorer.${APP_DOMAIN}"
       - "traefik.http.middlewares.explorer-cors.headers.accesscontrolmaxage=100"
       - "traefik.http.middlewares.explorer-cors.headers.addvaryheader=true"
       - "traefik.http.middlewares.explorer-cors.headers.accesscontrolallowheaders=*"
@@ -354,7 +354,7 @@ services:
       - explorer-api
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.explorer-app.rule=Host(`l2explorer.${APP_DOMAIN}`)"
+      - "traefik.http.routers.explorer-app.rule=Host(`explorer.${APP_DOMAIN}`)"
       - "traefik.http.routers.explorer-app.tls=true"
       - "traefik.http.services.explorer-app.loadbalancer.server.port=3010"
 
