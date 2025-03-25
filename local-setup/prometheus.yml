@@ -13,7 +13,7 @@ scrape_configs:
     metrics_path: /metrics
 
   - job_name: 'reth'
-    fallback_scrape_protocol: PrometheusText0.0.4
+    # fallback_scrape_protocol: PrometheusText0.0.4
     static_configs:
       - targets: ['reth:9001']
     metrics_path: /
